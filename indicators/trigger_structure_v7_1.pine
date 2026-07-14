@@ -1,0 +1,590 @@
+//@version=5
+// v7.1 — приведение отображения к эталону движка engine_v5.py.
+// Проверено на золоте 1H 2017-2026 (52518 баров): эталон = 939 сделок, +53.2R.
+// Изменения против v7:
+//   1. «Одна позиция» по умолчанию ВЫКЛ — движок считает перекрывающиеся сделки
+//      (v7 с блокировкой показывал 723 входа из 939, терял 23% жёлтых точек).
+//   2. Порог размера свечи: режим «фикс (эталон)» = 0.317% (P80 всей истории,
+//      как движок). Растущее окно v7 давало 863 сделки вместо 939.
+//   3. Несколько виртуальных позиций одновременно — раньше вторая сделка
+//      затирала первую и её SL/TP не отрисовывался.
+//   4. Линии/метки сделок рисуются только за последние N баров (лимит
+//      TradingView 500 линий; 939 сделок × 3 линии = молчаливое стирание).
+//   5. Исправлены offset у HL/LH (были перепутаны rightLenH/rightLenL).
+indicator("Триггер + Структура v7.1 (движок v5)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ══════════════════════════════════════════════════════════════════
+// ОРИГИНАЛЬНЫЕ НАСТРОЙКИ (v6) — без изменений
+// ══════════════════════════════════════════════════════════════════
+g1 = "🕯 Триггерные свечи"
+show_trigger = input.bool(true, "Показывать триггерные свечи", group=g1)
+tol          = input.float(4.0, "Допуск ±%", minval=1.0, maxval=15.0, group=g1)
+
+g2 = "📍 Пивоты HL"
+srcH      = input.source(high, "High", inline="H", group=g2)
+leftLenH  = input.int(2, "", minval=0, inline="H", group=g2)
+rightLenH = input.int(2, "", minval=0, inline="H", group=g2)
+colorH    = input.color(color.new(color.green, 0), "", inline="H", group=g2)
+srcL      = input.source(low, "Low", inline="L", group=g2)
+leftLenL  = input.int(2, "", minval=0, inline="L", group=g2)
+rightLenL = input.int(2, "", minval=0, inline="L", group=g2)
+colorL    = input.color(color.new(color.red, 0), "", inline="L", group=g2)
+showhh = input.bool(true, "HH", inline="marks", group=g2)
+showlh = input.bool(true, "LH", inline="marks", group=g2)
+showhl = input.bool(true, "HL", inline="marks", group=g2)
+showll = input.bool(true, "LL", inline="marks", group=g2)
+
+g3 = "📏 Пунктирные линии HH/LL"
+show_lines_1h = input.bool(true, "1H", inline="lines", group=g3)
+show_lines_4h = input.bool(true, "4H", inline="lines", group=g3)
+show_lines_1d = input.bool(true, "1D", inline="lines", group=g3)
+transp_lines  = input.int(40, "Прозрачность", minval=0, maxval=100, group=g3)
+
+g4 = "〰 Зиг-Заг"
+show_zigzag = input.bool(true, "Показывать зиг-заг", group=g4)
+zz_len      = input.int(3, "Длина", minval=1, maxval=20, group=g4)
+zz_width    = input.int(2, "Толщина", minval=1, maxval=4, group=g4)
+
+g5 = "🎯 Сигналы"
+show_signals = input.bool(true, "Показывать сигналы", group=g5)
+
+// ══════════════════════════════════════════════════════════════════
+// НАСТРОЙКИ ДВИЖКА v5
+// Значения по умолчанию = engine_v5.py (эталон). Менять = уходить от эталона.
+// ══════════════════════════════════════════════════════════════════
+g6 = "🤖 Движок v5"
+show_v5     = input.bool(true,  "Включить движок v5", group=g6)
+v5_one_pos  = input.bool(false, "Одна позиция (движок: ВЫКЛ — сделки перекрываются)", group=g6)
+v5_grey     = input.bool(true,  "Серые точки — пропуски движка", group=g6)
+v5_lines    = input.bool(true,  "Линии вход/стоп/тейк", group=g6)
+v5_draw_bars= input.int(5000,  "Рисовать сделки за последние N баров", minval=100, group=g6)
+v5_tbl      = input.bool(true,  "Таблица", group=g6)
+v5_tbl_pos  = input.string("верх-право", "Позиция таблицы", options=["верх-право","верх-лево","низ-право","низ-лево"], group=g6)
+v5_rr_min   = input.float(3.0, "Мин. RR магнита (движок: 3.0)", minval=0.5, step=0.5, group=g6)
+v5_buf_pct  = input.float(0.1, "Буфер стопа, % (движок: 0.1)", minval=0.0, step=0.05, group=g6)
+v5_thr_mode = input.string("фикс (эталон движка)", "Порог размера свечи", options=["фикс (эталон движка)","авто (растущее окно)"], group=g6, tooltip="Движок считает P80 по ВСЕЙ истории сразу = 0.317% на золоте 1H. Режим «авто» честен в реальном времени, но на истории даёт другие входы (863 вместо 939). Для другого инструмента/ТФ — либо пересчитать фикс, либо «авто».")
+v5_thr_fix  = input.float(0.317, "Фикс. порог, % (золото 1H: 0.317)", minval=0.01, step=0.001, group=g6)
+v5_pctl     = input.float(80,  "Перцентиль для «авто» (движок: 80)", minval=50, maxval=99, group=g6)
+v5_min_smpl = input.int(20,   "Мин. триггеров для «авто»", minval=1, group=g6)
+
+// ═══ ТРИГГЕРНЫЕ СВЕЧИ ═══
+range_    = high - low
+body_     = math.abs(close - open)
+upper_    = open > close ? high - open  : high - close
+lower_    = open > close ? close - low  : open  - low
+body_pct  = range_ > 0 ? body_  / range_ * 100 : 0.0
+upper_pct = range_ > 0 ? upper_ / range_ * 100 : 0.0
+lower_pct = range_ > 0 ? lower_ / range_ * 100 : 0.0
+
+tb = array.from(12.6,14.7,17.0,32.0,20.2,4.1,23.0,27.9,30.7,35.2,24.5,41.9,26.0,25.9,11.6,23.3,49.3,14.0,18.3,25.4,27.9,45.7,29.2,40.6,41.9,10.4,41.5,23.6,32.2,18.8,35.5,32.2,54.2,10.8,47.3,16.0,21.6,19.8,9.9,27.5)
+tu = array.from(33.7,37.3,37.7,27.8,29.4,40.4,35.7,35.3,41.0,35.7,28.4,22.0,39.6,37.4,46.0,31.5,21.5,27.5,47.3,35.6,26.2,24.8,36.3,36.7,26.8,35.6,20.7,34.5,36.4,46.2,38.6,33.6,21.6,44.1,22.9,45.2,42.8,45.2,41.5,30.7)
+tl = array.from(53.7,48.0,45.3,40.2,50.4,55.5,41.3,36.8,28.3,29.1,71.6,36.0,34.5,36.7,42.5,45.2,29.2,58.5,34.4,39.0,46.0,29.5,34.5,22.6,31.3,54.0,37.9,41.9,31.4,34.9,25.8,34.2,24.2,45.1,29.8,38.8,35.5,35.0,48.6,41.8)
+
+shape_ok = false
+for i = 0 to 39
+    if math.abs(body_pct  - array.get(tb, i)) <= tol and
+       math.abs(upper_pct - array.get(tu, i)) <= tol and
+       math.abs(lower_pct - array.get(tl, i)) <= tol
+        shape_ok := true
+        break
+
+// (жёлтая точка рисуется в конце скрипта — с учётом движка v5)
+
+// ═══ ПИВОТЫ ═══
+ph = ta.pivothigh(srcH, leftLenH, rightLenH)
+pl = ta.pivotlow (srcL, leftLenL, rightLenL)
+
+ph_value = srcH[rightLenH]
+pl_value = srcL[rightLenL]
+
+valuewhen_1 = ta.valuewhen(not na(ph), ph_value, 1)
+valuewhen_2 = ta.valuewhen(not na(ph), ph_value, 0)
+higherhigh = na(ph) ? na : valuewhen_1 < valuewhen_2 ? ph : na
+lowerhigh  = na(ph) ? na : valuewhen_1 > valuewhen_2 ? ph : na
+
+valuewhen_3 = ta.valuewhen(not na(pl), pl_value, 1)
+valuewhen_4 = ta.valuewhen(not na(pl), pl_value, 0)
+higherlow = na(pl) ? na : valuewhen_3 < valuewhen_4 ? pl : na
+lowerlow  = na(pl) ? na : valuewhen_3 > valuewhen_4 ? pl : na
+
+// v7.1: исправлены offset (HL — пивот по low, LH — пивот по high)
+plotshape(showhh ? higherhigh : na, title="HH", style=shape.triangledown, location=location.abovebar, color=colorH, text="HH", textcolor=colorH, offset=-rightLenH)
+plotshape(showhl ? higherlow  : na, title="HL", style=shape.triangleup,   location=location.belowbar, color=colorL, text="HL", textcolor=colorL, offset=-rightLenL)
+plotshape(showlh ? lowerhigh  : na, title="LH", style=shape.triangledown, location=location.abovebar, color=colorH, text="LH", textcolor=colorH, offset=-rightLenH)
+plotshape(showll ? lowerlow   : na, title="LL", style=shape.triangleup,   location=location.belowbar, color=colorL, text="LL", textcolor=colorL, offset=-rightLenL)
+
+// ═══ ПОСЛЕДНИЕ 2 ПИВОТА (оригинальная логика v6 для сигналов) ═══
+var int p0 = 0
+var int p1 = 0
+
+if not na(higherhigh)
+    p1 := p0
+    p0 := 1
+if not na(higherlow)
+    p1 := p0
+    p0 := 2
+if not na(lowerhigh)
+    p1 := p0
+    p0 := 3
+if not na(lowerlow)
+    p1 := p0
+    p0 := 4
+
+// ══════════════════════════════════════════════════════════════════
+// ДВИЖОК v5 — ПОСЛЕДОВАТЕЛЬНОСТЬ МЕТОК (аналог mk() из engine_v3)
+// Метка = подтверждённый пивот, отличающийся по цене от предыдущего
+// того же типа. Храним 5 последних: label / price / side / бар подтверждения.
+// Сверено с движком: на золоте 1H даёт те же 939 сделок (engine/reference_v5.py).
+// ══════════════════════════════════════════════════════════════════
+var string[] q_lab  = array.new_string()
+var float[]  q_prc  = array.new_float()
+var string[] q_side = array.new_string()
+var int[]    q_conf = array.new_int()
+
+f_push(_lab, _prc, _side) =>
+    array.push(q_lab,  _lab)
+    array.push(q_prc,  _prc)
+    array.push(q_side, _side)
+    array.push(q_conf, bar_index)
+    if array.size(q_lab) > 5
+        array.shift(q_lab)
+        array.shift(q_prc)
+        array.shift(q_side)
+        array.shift(q_conf)
+
+// higherhigh/lowerhigh уже отфильтровали равные цены (na при равенстве) — как в mk()
+newH = not na(higherhigh) or not na(lowerhigh)
+newL = not na(higherlow)  or not na(lowerlow)
+if newH and newL
+    // оба подтвердились на одном баре: порядок по бару пивота (как sort по (conf, bar))
+    if rightLenH >= rightLenL
+        f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
+        f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+    else
+        f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+        f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
+else if newH
+    f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
+else if newL
+    f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+
+// ═══ ДВИЖОК v5 — ПОРОГ РАЗМЕРА ТРИГГЕРНЫХ СВЕЧЕЙ ═══
+// «фикс (эталон)»: P80 всей истории, как движок (0.317% на золоте 1H) — история
+// совпадает со статистикой движка. «авто»: растущее окно, честно в реальном
+// времени, но история отличается (863 сделки вместо 939 на золоте).
+var float[] trig_sz = array.new_float()
+sz_pct = close > 0 ? (high - low) / close * 100 : 0.0
+if shape_ok and barstate.isconfirmed
+    array.push(trig_sz, sz_pct)
+thr = v5_thr_mode == "фикс (эталон движка)" ? v5_thr_fix : array.size(trig_sz) >= v5_min_smpl ? array.percentile_linear_interpolation(trig_sz, v5_pctl) : na
+
+// ═══ ДВИЖОК v5 — ФУНКЦИИ ═══
+f_tail(_n) =>
+    n = array.size(q_lab)
+    m = math.min(_n, n)
+    s = ""
+    if m > 0
+        for j = n - m to n - 1
+            s := s + (j > n - m ? ">" : "") + array.get(q_lab, j)
+    s
+
+// Цепочка decide_v4 + запреты v5 (точный порядок engine_v4/engine_v5):
+// заморозка → бол.свеча → против тренда → слом → стоп → магнит RR → запреты
+f_decide(_thr) =>
+    string vd = ""
+    string dd = ""
+    float  en = na
+    float  sl = na
+    float  tp = na
+    float  rr = na
+    n = array.size(q_lab)
+    if n == 0
+        vd := "нет меток"
+    else
+        lastL   = array.get(q_lab, n - 1)
+        is_long = lastL == "HL" or lastL == "LL"
+        dd := is_long ? "LONG" : "SHORT"
+        lag = bar_index - array.get(q_conf, n - 1)
+        up = 0
+        dn = 0
+        for j = 0 to n - 1
+            lb = array.get(q_lab, j)
+            up += lb == "HH" or lb == "HL" ? 1 : 0
+            dn += lb == "LH" or lb == "LL" ? 1 : 0
+        had_slom = false
+        if n >= 2
+            for j = 1 to n - 1
+                a = array.get(q_lab, j - 1)
+                b = array.get(q_lab, j)
+                if (a == "HH" and b == "LL") or (a == "LL" and b == "HL")
+                    had_slom := true
+        prevL = n >= 2 ? array.get(q_lab, n - 2) : ""
+        fresh_slom = (prevL == "HH" and lastL == "LL") or (prevL == "LL" and lastL == "HL")
+        if (lastL == "LL" or lastL == "HH") and lag <= 1
+            vd := "заморозка"
+        else if na(_thr)
+            vd := "мало триггеров"
+        else if sz_pct > _thr
+            vd := "бол.свеча"
+        else if not had_slom and not is_long and up >= (lastL == "HH" ? 3 : 4)
+            vd := "против тренда"
+        else if not had_slom and is_long and dn >= 4
+            vd := "против тренда"
+        else if fresh_slom
+            vd := "слом"
+        else
+            en := close
+            sl := is_long ? low * (1 - v5_buf_pct / 100) : high * (1 + v5_buf_pct / 100)
+            if (is_long and sl >= en) or (not is_long and sl <= en)
+                vd := "стоп?"
+            else
+                risk = math.abs(en - sl)
+                // магнит: метки нужной стороны дальше входа, от ближней к дальней,
+                // первая с RR >= порога (перепрыгивание ближних с RR<3 — как в движке)
+                float[] cprc = array.new_float()
+                for j = 0 to n - 1
+                    if array.get(q_side, j) == (is_long ? "high" : "low")
+                        p = array.get(q_prc, j)
+                        if (is_long and p > en) or (not is_long and p < en)
+                            array.push(cprc, p)
+                if array.size(cprc) > 0
+                    array.sort(cprc, is_long ? order.ascending : order.descending)
+                    for j = 0 to array.size(cprc) - 1
+                        p = array.get(cprc, j)
+                        if math.abs(p - en) / risk >= v5_rr_min
+                            tp := p
+                            break
+                if na(tp)
+                    vd := "нет RR"
+                else
+                    rr := math.abs(tp - en) / risk
+                    s5 = f_tail(5)
+                    vd := str.endswith(s5, "LL>HH") ? "запрет LL>HH" : str.endswith(s5, "HH>LH") ? "запрет HH>LH" : str.endswith(s5, "LL>LH>HL") ? "запрет LL>LH>HL" : str.endswith(s5, "HH>LL>LL") ? "запрет HH>LL>LL" : "ВХОД"
+    [vd, dd, en, sl, tp, rr]
+
+// ═══ ДВИЖОК v5 — ВИРТУАЛЬНЫЕ ПОЗИЦИИ ═══
+// v7.1: несколько позиций одновременно, как в движке (run_v5 не блокирует
+// новые входы). v7 хранил одну — вторая сделка затирала первую, SL/TP терялись.
+var array<bool>  P_long = array.new<bool>()
+var array<float> P_en   = array.new<float>()
+var array<float> P_sl   = array.new<float>()
+var array<float> P_tp   = array.new<float>()
+var array<int>   P_bar  = array.new<int>()
+var array<line>  P_lnen = array.new<line>()
+var array<line>  P_lnsl = array.new<line>()
+var array<line>  P_lntp = array.new<line>()
+
+// бюджет отрисовки: линии/метки сделок только за последние N баров
+can_draw = last_bar_index - bar_index <= v5_draw_bars
+
+// сопровождение: тянем линии, проверяем выход (с бара ПОСЛЕ входа, как resolve i+1)
+if array.size(P_en) > 0
+    k = 0
+    while k < array.size(P_en)
+        lnen = array.get(P_lnen, k)
+        if not na(lnen)
+            line.set_x2(lnen, bar_index)
+            line.set_x2(array.get(P_lnsl, k), bar_index)
+            line.set_x2(array.get(P_lntp, k), bar_index)
+        closed = false
+        if bar_index > array.get(P_bar, k) and barstate.isconfirmed
+            plong = array.get(P_long, k)
+            psl   = array.get(P_sl, k)
+            ptp   = array.get(P_tp, k)
+            hit_sl = plong ? low  <= psl : high >= psl
+            hit_tp = plong ? high >= ptp : low  <= ptp
+            if hit_sl or hit_tp
+                res_sl = hit_sl  // SL и TP в одном баре = SL (консервативно, как в движке)
+                if v5_lines and can_draw
+                    label.new(bar_index, res_sl ? psl : ptp, res_sl ? "SL" : "TP", style=res_sl ? label.style_label_up : label.style_label_down, color=res_sl ? color.new(color.red, 0) : color.new(color.green, 0), textcolor=color.white, size=size.small)
+                array.remove(P_long, k)
+                array.remove(P_en,   k)
+                array.remove(P_sl,   k)
+                array.remove(P_tp,   k)
+                array.remove(P_bar,  k)
+                array.remove(P_lnen, k)
+                array.remove(P_lnsl, k)
+                array.remove(P_lntp, k)
+                closed := true
+        if not closed
+            k += 1
+
+// ═══ ДВИЖОК v5 — РЕШЕНИЕ НА ТРИГГЕРНОЙ СВЕЧЕ ═══
+string v5_vd  = na
+string v5_dd  = na
+float  v5_en  = na
+float  v5_sl_ = na
+float  v5_tp_ = na
+float  v5_rr_ = na
+
+if show_v5 and shape_ok and barstate.isconfirmed
+    if v5_one_pos and array.size(P_en) > 0
+        v5_vd := "в позиции"
+        v5_dd := ""
+    else
+        [a1, a2, a3, a4, a5, a6] = f_decide(thr)
+        v5_vd  := a1
+        v5_dd  := a2
+        v5_en  := a3
+        v5_sl_ := a4
+        v5_tp_ := a5
+        v5_rr_ := a6
+
+// память последнего триггера — для таблицы
+var string last_vd = "—"
+var string last_dd = ""
+if not na(v5_vd)
+    last_vd := v5_vd
+    last_dd := v5_dd
+
+// вход
+if v5_vd == "ВХОД"
+    array.push(P_long, v5_dd == "LONG")
+    array.push(P_en,  v5_en)
+    array.push(P_sl,  v5_sl_)
+    array.push(P_tp,  v5_tp_)
+    array.push(P_bar, bar_index)
+    if v5_lines and can_draw
+        array.push(P_lnen, line.new(bar_index, v5_en,  bar_index + 1, v5_en,  color=color.new(color.blue,  0), width=2))
+        array.push(P_lnsl, line.new(bar_index, v5_sl_, bar_index + 1, v5_sl_, color=color.new(color.red,   0), width=2))
+        array.push(P_lntp, line.new(bar_index, v5_tp_, bar_index + 1, v5_tp_, color=color.new(color.green, 0), width=2))
+        label.new(bar_index, v5_en, (v5_dd == "LONG" ? "▲ LONG" : "▼ SHORT") + " RR " + str.tostring(v5_rr_, "#.##"), style=v5_dd == "LONG" ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small)
+    else
+        array.push(P_lnen, line(na))
+        array.push(P_lnsl, line(na))
+        array.push(P_lntp, line(na))
+
+alertcondition(v5_vd == "ВХОД", "Движок v5: ВХОД", "Движок v5: валидный вход (см. линии вход/стоп/тейк)")
+
+// ═══ ЖЁЛТЫЕ / СЕРЫЕ ТОЧКИ ═══
+// движок включён: жёлтый = вход, серый = пропуск (психология: жёлтый = призыв к действию)
+// движок выключен: жёлтый = все триггеры (как в v6)
+plotshape(show_trigger and shape_ok and (not show_v5 or v5_vd == "ВХОД"), title="Триггер", location=location.belowbar, style=shape.circle, color=color.new(color.yellow, 0), size=size.tiny)
+plotshape(show_trigger and shape_ok and show_v5 and v5_grey and v5_vd != "ВХОД", title="Триггер (пропуск)", location=location.belowbar, style=shape.circle, color=color.new(color.gray, 30), size=size.tiny)
+
+// ═══ ТАБЛИЦА v5 ═══
+tblpos = v5_tbl_pos == "верх-право" ? position.top_right : v5_tbl_pos == "верх-лево" ? position.top_left : v5_tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
+var table T = table.new(tblpos, 2, 7, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+
+if v5_tbl and show_v5 and barstate.islast
+    n5    = array.size(q_lab)
+    lastL = n5 > 0 ? array.get(q_lab, n5 - 1) : "—"
+    gap   = lastL == "HH" or lastL == "LH" ? 2 : 3
+    tail5 = f_tail(5)
+    tailG = f_tail(gap)
+    ban1 = str.endswith(tail5, "LL>HH")
+    ban2 = str.endswith(tail5, "HH>LH")
+    ban3 = str.endswith(tail5, "LL>LH>HL")
+    ban4 = str.endswith(tail5, "HH>LL>LL")
+    banstr = (ban1 ? "LL>HH  " : "") + (ban2 ? "HH>LH  " : "") + (ban3 ? "LL>LH>HL  " : "") + (ban4 ? "HH>LL>LL" : "")
+    hdrc = color.new(color.silver, 0)
+    table.cell(T, 0, 0, "Метки (5)",                                 text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 0, tail5 == "" ? "—" : tail5,                    text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 1, "Хвост v5 (зазор " + str.tostring(gap) + ")", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 1, tailG == "" ? "—" : tailG,                    text_color=color.aqua, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 2, "Запрет активен",                             text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 2, banstr == "" ? "нет" : banstr,                text_color=banstr == "" ? color.gray : color.red, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 3, "Последний триггер",                          text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 3, last_vd + (last_dd != "" ? " (" + last_dd + ")" : ""), text_color=last_vd == "ВХОД" ? color.lime : color.orange, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 4, "Позиции",                                    text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    np5 = array.size(P_en)
+    postxt = np5 == 0 ? "нет" : str.tostring(np5) + " шт | посл: " + (array.get(P_long, np5 - 1) ? "LONG " : "SHORT ") + str.tostring(array.get(P_en, np5 - 1), format.mintick) + " | SL " + str.tostring(array.get(P_sl, np5 - 1), format.mintick) + " | TP " + str.tostring(array.get(P_tp, np5 - 1), format.mintick)
+    table.cell(T, 1, 4, postxt,                                       text_color=np5 > 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
+    thrsrc = v5_thr_mode == "фикс (эталон движка)" ? "фикс" : "P" + str.tostring(v5_pctl, "#")
+    table.cell(T, 0, 5, "Порог свечи (" + thrsrc + ")",                text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 5, na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%", text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 6, "Триггеров в базе",                           text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 6, str.tostring(array.size(trig_sz)),            text_color=color.white, text_halign=text.align_left, text_size=size.small)
+
+// ═══ ПУНКТИРНЫЕ ЛИНИИ 1H ═══
+var array<line>  hh_lines_1h  = array.new<line>()
+var array<float> hh_levels_1h = array.new<float>()
+var array<line>  ll_lines_1h  = array.new<line>()
+var array<float> ll_levels_1h = array.new<float>()
+
+if show_lines_1h
+    if not na(higherhigh)
+        l = line.new(bar_index[rightLenH], higherhigh, bar_index, higherhigh,
+              color=color.new(colorH, transp_lines), width=1,
+              style=line.style_dashed, extend=extend.right)
+        array.push(hh_lines_1h,  l)
+        array.push(hh_levels_1h, higherhigh)
+    if not na(lowerlow)
+        l = line.new(bar_index[rightLenL], lowerlow, bar_index, lowerlow,
+              color=color.new(colorL, transp_lines), width=1,
+              style=line.style_dashed, extend=extend.right)
+        array.push(ll_lines_1h,  l)
+        array.push(ll_levels_1h, lowerlow)
+    if array.size(hh_lines_1h) > 0
+        i = 0
+        while i < array.size(hh_lines_1h)
+            lvl = array.get(hh_levels_1h, i)
+            if high >= lvl
+                line.delete(array.get(hh_lines_1h, i))
+                array.remove(hh_lines_1h,  i)
+                array.remove(hh_levels_1h, i)
+            else
+                i += 1
+    if array.size(ll_lines_1h) > 0
+        i = 0
+        while i < array.size(ll_lines_1h)
+            lvl = array.get(ll_levels_1h, i)
+            if low <= lvl
+                line.delete(array.get(ll_lines_1h, i))
+                array.remove(ll_lines_1h,  i)
+                array.remove(ll_levels_1h, i)
+            else
+                i += 1
+
+// ═══ ПУНКТИРНЫЕ ЛИНИИ 4H ═══
+ph_4h     = request.security(syminfo.tickerid, "240", ta.pivothigh(high, 2, 2), lookahead=barmerge.lookahead_off)
+pl_4h     = request.security(syminfo.tickerid, "240", ta.pivotlow (low,  2, 2), lookahead=barmerge.lookahead_off)
+ph_val_4h = request.security(syminfo.tickerid, "240", high[2], lookahead=barmerge.lookahead_off)
+pl_val_4h = request.security(syminfo.tickerid, "240", low[2],  lookahead=barmerge.lookahead_off)
+
+vw1_4h = ta.valuewhen(not na(ph_4h), ph_val_4h, 1)
+vw2_4h = ta.valuewhen(not na(ph_4h), ph_val_4h, 0)
+hh_4h  = na(ph_4h) ? na : vw1_4h < vw2_4h ? ph_4h : na
+vw3_4h = ta.valuewhen(not na(pl_4h), pl_val_4h, 1)
+vw4_4h = ta.valuewhen(not na(pl_4h), pl_val_4h, 0)
+ll_4h  = na(pl_4h) ? na : vw3_4h > vw4_4h ? pl_4h : na
+
+var array<line>  hh_lines_4h  = array.new<line>()
+var array<float> hh_levels_4h = array.new<float>()
+var array<line>  ll_lines_4h  = array.new<line>()
+var array<float> ll_levels_4h = array.new<float>()
+
+if show_lines_4h
+    if not na(hh_4h)
+        l = line.new(bar_index - 1, hh_4h, bar_index, hh_4h,
+              color=color.new(colorH, transp_lines), width=2,
+              style=line.style_dashed, extend=extend.right)
+        array.push(hh_lines_4h,  l)
+        array.push(hh_levels_4h, hh_4h)
+    if not na(ll_4h)
+        l = line.new(bar_index - 1, ll_4h, bar_index, ll_4h,
+              color=color.new(colorL, transp_lines), width=2,
+              style=line.style_dashed, extend=extend.right)
+        array.push(ll_lines_4h,  l)
+        array.push(ll_levels_4h, ll_4h)
+    if array.size(hh_lines_4h) > 0
+        i = 0
+        while i < array.size(hh_lines_4h)
+            lvl = array.get(hh_levels_4h, i)
+            if high >= lvl
+                line.delete(array.get(hh_lines_4h, i))
+                array.remove(hh_lines_4h,  i)
+                array.remove(hh_levels_4h, i)
+            else
+                i += 1
+    if array.size(ll_lines_4h) > 0
+        i = 0
+        while i < array.size(ll_lines_4h)
+            lvl = array.get(ll_levels_4h, i)
+            if low <= lvl
+                line.delete(array.get(ll_lines_4h, i))
+                array.remove(ll_lines_4h,  i)
+                array.remove(ll_levels_4h, i)
+            else
+                i += 1
+
+// ═══ ПУНКТИРНЫЕ ЛИНИИ 1D ═══
+ph_1d     = request.security(syminfo.tickerid, "D", ta.pivothigh(high, 2, 2), lookahead=barmerge.lookahead_off)
+pl_1d     = request.security(syminfo.tickerid, "D", ta.pivotlow (low,  2, 2), lookahead=barmerge.lookahead_off)
+ph_val_1d = request.security(syminfo.tickerid, "D", high[2], lookahead=barmerge.lookahead_off)
+pl_val_1d = request.security(syminfo.tickerid, "D", low[2],  lookahead=barmerge.lookahead_off)
+
+vw1_1d = ta.valuewhen(not na(ph_1d), ph_val_1d, 1)
+vw2_1d = ta.valuewhen(not na(ph_1d), ph_val_1d, 0)
+hh_1d  = na(ph_1d) ? na : vw1_1d < vw2_1d ? ph_1d : na
+vw3_1d = ta.valuewhen(not na(pl_1d), pl_val_1d, 1)
+vw4_1d = ta.valuewhen(not na(pl_1d), pl_val_1d, 0)
+ll_1d  = na(pl_1d) ? na : vw3_1d > vw4_1d ? pl_1d : na
+
+var array<line>  hh_lines_1d  = array.new<line>()
+var array<float> hh_levels_1d = array.new<float>()
+var array<line>  ll_lines_1d  = array.new<line>()
+var array<float> ll_levels_1d = array.new<float>()
+
+if show_lines_1d
+    if not na(hh_1d)
+        l = line.new(bar_index - 1, hh_1d, bar_index, hh_1d,
+              color=color.new(colorH, transp_lines), width=3,
+              style=line.style_dashed, extend=extend.right)
+        array.push(hh_lines_1d,  l)
+        array.push(hh_levels_1d, hh_1d)
+    if not na(ll_1d)
+        l = line.new(bar_index - 1, ll_1d, bar_index, ll_1d,
+              color=color.new(colorL, transp_lines), width=3,
+              style=line.style_dashed, extend=extend.right)
+        array.push(ll_lines_1d,  l)
+        array.push(ll_levels_1d, ll_1d)
+    if array.size(hh_lines_1d) > 0
+        i = 0
+        while i < array.size(hh_lines_1d)
+            lvl = array.get(hh_levels_1d, i)
+            if high >= lvl
+                line.delete(array.get(hh_lines_1d, i))
+                array.remove(hh_lines_1d,  i)
+                array.remove(hh_levels_1d, i)
+            else
+                i += 1
+    if array.size(ll_lines_1d) > 0
+        i = 0
+        while i < array.size(ll_lines_1d)
+            lvl = array.get(ll_levels_1d, i)
+            if low <= lvl
+                line.delete(array.get(ll_lines_1d, i))
+                array.remove(ll_lines_1d,  i)
+                array.remove(ll_levels_1d, i)
+            else
+                i += 1
+
+// ═══ ЗИГ-ЗАГ (в конце как в v3) ═══
+to_up_zz = high >= ta.highest(zz_len)
+to_dn_zz = low  <= ta.lowest(zz_len)
+
+var int zz_trend = 1
+zz_trend := nz(zz_trend[1], 1)
+zz_trend := zz_trend == 1 and to_dn_zz ? -1 : zz_trend == -1 and to_up_zz ? 1 : zz_trend
+
+last_up_since = ta.barssince(to_up_zz[1])
+last_dn_since = ta.barssince(to_dn_zz[1])
+
+zz_low_val  = ta.lowest (nz(last_up_since > 0 ? last_up_since : 1, 1))
+zz_high_val = ta.highest(nz(last_dn_since > 0 ? last_dn_since : 1, 1))
+
+zz_low_bar  = bar_index - ta.barssince(zz_low_val  == low)
+zz_high_bar = bar_index - ta.barssince(zz_high_val == high)
+
+var float zz_prev_val = na
+var int   zz_prev_bar = na
+
+if show_zigzag and ta.change(zz_trend) != 0
+    if zz_trend == 1
+        if not na(zz_prev_val)
+            col_zz = zz_low_val > zz_prev_val ? color.new(color.green, 0) : color.new(color.red, 0)
+            line.new(zz_prev_bar, zz_prev_val, zz_low_bar, zz_low_val, color=col_zz, width=zz_width)
+        zz_prev_val := zz_low_val
+        zz_prev_bar := zz_low_bar
+    if zz_trend == -1
+        if not na(zz_prev_val)
+            col_zz = zz_high_val > zz_prev_val ? color.new(color.green, 0) : color.new(color.red, 0)
+            line.new(zz_prev_bar, zz_prev_val, zz_high_bar, zz_high_val, color=col_zz, width=zz_width)
+        zz_prev_val := zz_high_val
+        zz_prev_bar := zz_high_bar
+
+// ═══ НАПРАВЛЕНИЕ ЗИГ-ЗАГА И СИГНАЛЫ (оригинал v6, независимо от движка v5) ═══
+var bool zz_bull = true
+if ta.change(zz_trend) != 0
+    zz_bull := zz_trend == -1
+
+long_struct  = p0 == 2 and zz_bull
+short_combo  = (p1 == 2 and p0 == 3) or (p1 == 3 and p0 == 1) or (p1 == 3 and p0 == 3) or (p1 == 4 and p0 == 3) or (p1 == 4 and p0 == 1) or (p1 == 2 and p0 == 1)
+short_struct = short_combo and not zz_bull
+
+long_signal  = show_signals and shape_ok and long_struct
+short_signal = show_signals and shape_ok and short_struct
+
+plotshape(long_signal,  title="Лонг", location=location.belowbar, style=shape.triangleup,   color=color.new(color.green, 0), size=size.small)
+plotshape(short_signal, title="Шорт", location=location.abovebar, style=shape.triangledown, color=color.new(color.red,   0), size=size.small)
