@@ -1,0 +1,243 @@
+//@version=5
+// ═══════════════════════════════════════════════════════════════════
+// ТРЕНАЖЁР v8 — чистая пересборка. Этап п.1-2: точки входов и ПРИЧИНЫ пропусков.
+// Логика вердиктов сверена с engine_v5.py повердиктно: 9416/9416 совпадений
+// на золоте 1H 2017-2026 (0 расхождений). Схема цветов: яркость = учебная
+// ценность, не частота.
+//   🟡 ВХОД (10.0%, ~2/нед)         — жёлтый: призыв к действию
+//   🔴 запрет структуры (3.3%)      — красный, крупнее: v2-глаз здесь входит!
+//   🟠 против тренда (10.3%)        — оранжевый
+//   🟣 слом (5.4%)                  — фиолетовый
+//   ⚪ заморозка (25.0%)            — бледно-серый (механика)
+//   ⚫ бол.свеча (15.5%)            — тёмно-серый (механика)
+//   ▫️ нет RR (30.5%)               — почти прозрачный (частая, не учебная)
+// Следующие пункты (по плану): линии сделок, таблица, метки структуры,
+// медленная структура 5/5, уровни, счётчик R, режим тренажёра.
+// ═══════════════════════════════════════════════════════════════════
+indicator("Тренажёр v8 (движок v5) — п.1-2", overlay=true)
+
+// ══════════════ НАСТРОЙКИ ══════════════
+g1 = "🕯 Триггерные свечи"
+tol = input.float(4.0, "Допуск формы ±%", minval=1.0, maxval=15.0, group=g1)
+
+g2 = "🤖 Движок v5"
+v5_thr_mode = input.string("фикс (эталон движка)", "Порог размера свечи", options=["фикс (эталон движка)","авто (растущее окно)"], group=g2, tooltip="Движок: P80 по всей истории = 0.317% на золоте 1H. «авто» — честно в реальном времени, но история отличается от эталона.")
+v5_thr_fix  = input.float(0.317, "Фикс. порог, % (золото 1H: 0.317)", minval=0.01, step=0.001, group=g2)
+v5_pctl     = input.float(80, "Перцентиль для «авто»", minval=50, maxval=99, group=g2)
+v5_min_smpl = input.int(20, "Мин. триггеров для «авто»", minval=1, group=g2)
+v5_rr_min   = input.float(3.0, "Мин. RR магнита (движок: 3.0)", minval=0.5, step=0.5, group=g2)
+v5_buf_pct  = input.float(0.1, "Буфер стопа, % (движок: 0.1)", minval=0.0, step=0.05, group=g2)
+
+g3 = "🎨 Точки"
+show_entry = input.bool(true,  "Входы (жёлтые)", group=g3)
+show_skip  = input.bool(true,  "Пропуски (цвет = причина)", group=g3)
+show_lett  = input.bool(false, "Буквы причин у точек", group=g3, tooltip="з=заморозка б=бол.свеча т=против тренда с=слом R=нет RR х=запрет хвоста")
+col_entry  = input.color(color.new(color.yellow, 0),  "ВХОД",            group=g3)
+col_ban    = input.color(color.new(color.red, 0),     "запрет структуры", group=g3)
+col_trend  = input.color(color.new(color.orange, 0),  "против тренда",   group=g3)
+col_slom   = input.color(color.new(color.purple, 0),  "слом",            group=g3)
+col_frz    = input.color(color.new(color.silver, 40), "заморозка",       group=g3)
+col_big    = input.color(color.new(#404040, 20),      "бол.свеча",       group=g3)
+col_norr   = input.color(color.new(color.gray, 75),   "нет RR",          group=g3)
+
+// ══════════════ ТРИГГЕРНЫЕ СВЕЧИ (40 шаблонов) ══════════════
+range_    = high - low
+body_     = math.abs(close - open)
+upper_    = open > close ? high - open  : high - close
+lower_    = open > close ? close - low  : open  - low
+body_pct  = range_ > 0 ? body_  / range_ * 100 : 0.0
+upper_pct = range_ > 0 ? upper_ / range_ * 100 : 0.0
+lower_pct = range_ > 0 ? lower_ / range_ * 100 : 0.0
+
+tb = array.from(12.6,14.7,17.0,32.0,20.2,4.1,23.0,27.9,30.7,35.2,24.5,41.9,26.0,25.9,11.6,23.3,49.3,14.0,18.3,25.4,27.9,45.7,29.2,40.6,41.9,10.4,41.5,23.6,32.2,18.8,35.5,32.2,54.2,10.8,47.3,16.0,21.6,19.8,9.9,27.5)
+tu = array.from(33.7,37.3,37.7,27.8,29.4,40.4,35.7,35.3,41.0,35.7,28.4,22.0,39.6,37.4,46.0,31.5,21.5,27.5,47.3,35.6,26.2,24.8,36.3,36.7,26.8,35.6,20.7,34.5,36.4,46.2,38.6,33.6,21.6,44.1,22.9,45.2,42.8,45.2,41.5,30.7)
+tl = array.from(53.7,48.0,45.3,40.2,50.4,55.5,41.3,36.8,28.3,29.1,71.6,36.0,34.5,36.7,42.5,45.2,29.2,58.5,34.4,39.0,46.0,29.5,34.5,22.6,31.3,54.0,37.9,41.9,31.4,34.9,25.8,34.2,24.2,45.1,29.8,38.8,35.5,35.0,48.6,41.8)
+
+shape_ok = false
+for i = 0 to 39
+    if math.abs(body_pct  - array.get(tb, i)) <= tol and
+       math.abs(upper_pct - array.get(tu, i)) <= tol and
+       math.abs(lower_pct - array.get(tl, i)) <= tol
+        shape_ok := true
+        break
+
+// ══════════════ ПИВОТЫ 2/2 И МЕТКИ (сверено с mk() движка) ══════════════
+ph = ta.pivothigh(high, 2, 2)
+pl = ta.pivotlow (low,  2, 2)
+ph_value = high[2]
+pl_value = low[2]
+
+vw1 = ta.valuewhen(not na(ph), ph_value, 1)
+vw2 = ta.valuewhen(not na(ph), ph_value, 0)
+higherhigh = na(ph) ? na : vw1 < vw2 ? ph : na
+lowerhigh  = na(ph) ? na : vw1 > vw2 ? ph : na
+vw3 = ta.valuewhen(not na(pl), pl_value, 1)
+vw4 = ta.valuewhen(not na(pl), pl_value, 0)
+higherlow = na(pl) ? na : vw3 < vw4 ? pl : na
+lowerlow  = na(pl) ? na : vw3 > vw4 ? pl : na
+
+var string[] q_lab  = array.new_string()
+var float[]  q_prc  = array.new_float()
+var string[] q_side = array.new_string()
+var int[]    q_conf = array.new_int()
+
+f_push(_lab, _prc, _side) =>
+    array.push(q_lab,  _lab)
+    array.push(q_prc,  _prc)
+    array.push(q_side, _side)
+    array.push(q_conf, bar_index)
+    if array.size(q_lab) > 5
+        array.shift(q_lab)
+        array.shift(q_prc)
+        array.shift(q_side)
+        array.shift(q_conf)
+
+newH = not na(higherhigh) or not na(lowerhigh)
+newL = not na(higherlow)  or not na(lowerlow)
+if newH and newL
+    f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
+    f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+else if newH
+    f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
+else if newL
+    f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+
+// ══════════════ ПОРОГ РАЗМЕРА ══════════════
+var float[] trig_sz = array.new_float()
+sz_pct = close > 0 ? (high - low) / close * 100 : 0.0
+if shape_ok and barstate.isconfirmed
+    array.push(trig_sz, sz_pct)
+thr = v5_thr_mode == "фикс (эталон движка)" ? v5_thr_fix : array.size(trig_sz) >= v5_min_smpl ? array.percentile_linear_interpolation(trig_sz, v5_pctl) : na
+
+// ══════════════ РЕШЕНИЕ ДВИЖКА (каскад decide_v4 + запреты v5) ══════════════
+f_tail(_n) =>
+    n = array.size(q_lab)
+    m = math.min(_n, n)
+    s = ""
+    if m > 0
+        for j = n - m to n - 1
+            s := s + (j > n - m ? ">" : "") + array.get(q_lab, j)
+    s
+
+f_decide(_thr) =>
+    string vd = ""
+    string dd = ""
+    float  en = na
+    float  sl = na
+    float  tp = na
+    float  rr = na
+    n = array.size(q_lab)
+    if n == 0
+        vd := "нет меток"
+    else
+        lastL   = array.get(q_lab, n - 1)
+        is_long = lastL == "HL" or lastL == "LL"
+        dd := is_long ? "LONG" : "SHORT"
+        lag = bar_index - array.get(q_conf, n - 1)
+        up = 0
+        dn = 0
+        for j = 0 to n - 1
+            lb = array.get(q_lab, j)
+            up += lb == "HH" or lb == "HL" ? 1 : 0
+            dn += lb == "LH" or lb == "LL" ? 1 : 0
+        had_slom = false
+        if n >= 2
+            for j = 1 to n - 1
+                a = array.get(q_lab, j - 1)
+                b = array.get(q_lab, j)
+                if (a == "HH" and b == "LL") or (a == "LL" and b == "HL")
+                    had_slom := true
+        prevL = n >= 2 ? array.get(q_lab, n - 2) : ""
+        fresh_slom = (prevL == "HH" and lastL == "LL") or (prevL == "LL" and lastL == "HL")
+        if (lastL == "LL" or lastL == "HH") and lag <= 1
+            vd := "заморозка"
+        else if na(_thr)
+            vd := "мало триггеров"
+        else if sz_pct > _thr
+            vd := "бол.свеча"
+        else if not had_slom and not is_long and up >= (lastL == "HH" ? 3 : 4)
+            vd := "против тренда"
+        else if not had_slom and is_long and dn >= 4
+            vd := "против тренда"
+        else if fresh_slom
+            vd := "слом"
+        else
+            en := close
+            sl := is_long ? low * (1 - v5_buf_pct / 100) : high * (1 + v5_buf_pct / 100)
+            if (is_long and sl >= en) or (not is_long and sl <= en)
+                vd := "стоп?"
+            else
+                risk = math.abs(en - sl)
+                float[] cprc = array.new_float()
+                for j = 0 to n - 1
+                    if array.get(q_side, j) == (is_long ? "high" : "low")
+                        p = array.get(q_prc, j)
+                        if (is_long and p > en) or (not is_long and p < en)
+                            array.push(cprc, p)
+                if array.size(cprc) > 0
+                    array.sort(cprc, is_long ? order.ascending : order.descending)
+                    for j = 0 to array.size(cprc) - 1
+                        p = array.get(cprc, j)
+                        if math.abs(p - en) / risk >= v5_rr_min
+                            tp := p
+                            break
+                if na(tp)
+                    vd := "нет RR"
+                else
+                    rr := math.abs(tp - en) / risk
+                    s5 = f_tail(5)
+                    vd := str.endswith(s5, "LL>HH") ? "запрет LL>HH" : str.endswith(s5, "HH>LH") ? "запрет HH>LH" : str.endswith(s5, "LL>LH>HL") ? "запрет LL>LH>HL" : str.endswith(s5, "HH>LL>LL") ? "запрет HH>LL>LL" : "ВХОД"
+    [vd, dd, en, sl, tp, rr]
+
+string v5_vd  = na
+string v5_dd  = na
+float  v5_en  = na
+float  v5_sl_ = na
+float  v5_tp_ = na
+float  v5_rr_ = na
+
+if shape_ok and barstate.isconfirmed
+    [a1, a2, a3, a4, a5, a6] = f_decide(thr)
+    v5_vd  := a1
+    v5_dd  := a2
+    v5_en  := a3
+    v5_sl_ := a4
+    v5_tp_ := a5
+    v5_rr_ := a6
+
+// ══════════════ ТОЧКИ: ЦВЕТ = ПРИЧИНА ══════════════
+c_entry = v5_vd == "ВХОД"
+c_ban   = not na(v5_vd) and str.startswith(v5_vd, "запрет")
+c_trend = v5_vd == "против тренда"
+c_slom  = v5_vd == "слом"
+c_frz   = v5_vd == "заморозка"
+c_big   = v5_vd == "бол.свеча"
+c_norr  = v5_vd == "нет RR"
+c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz or c_big or c_norr)
+
+// вход — жёлтый, без буквы (жёлтый говорит сам)
+plotshape(show_entry and c_entry, title="ВХОД", style=shape.circle, location=location.belowbar, color=col_entry, size=size.small)
+
+// запрет структуры — учебная категория №1: КРУПНЕЕ остальных
+plotshape(show_skip and c_ban and not show_lett, title="Запрет структуры", style=shape.circle, location=location.belowbar, color=col_ban, size=size.small)
+plotshape(show_skip and c_ban and show_lett,     title="Запрет (буква)",   style=shape.circle, location=location.belowbar, color=col_ban, size=size.small, text="х", textcolor=col_ban)
+
+plotshape(show_skip and c_trend and not show_lett, title="Против тренда", style=shape.circle, location=location.belowbar, color=col_trend, size=size.tiny)
+plotshape(show_skip and c_trend and show_lett,     title="Против тренда (буква)", style=shape.circle, location=location.belowbar, color=col_trend, size=size.tiny, text="т", textcolor=col_trend)
+
+plotshape(show_skip and c_slom and not show_lett, title="Слом", style=shape.circle, location=location.belowbar, color=col_slom, size=size.tiny)
+plotshape(show_skip and c_slom and show_lett,     title="Слом (буква)", style=shape.circle, location=location.belowbar, color=col_slom, size=size.tiny, text="с", textcolor=col_slom)
+
+plotshape(show_skip and c_frz and not show_lett, title="Заморозка", style=shape.circle, location=location.belowbar, color=col_frz, size=size.tiny)
+plotshape(show_skip and c_frz and show_lett,     title="Заморозка (буква)", style=shape.circle, location=location.belowbar, color=col_frz, size=size.tiny, text="з", textcolor=col_frz)
+
+plotshape(show_skip and c_big and not show_lett, title="Бол.свеча", style=shape.circle, location=location.belowbar, color=col_big, size=size.tiny)
+plotshape(show_skip and c_big and show_lett,     title="Бол.свеча (буква)", style=shape.circle, location=location.belowbar, color=col_big, size=size.tiny, text="б", textcolor=col_big)
+
+plotshape(show_skip and c_norr and not show_lett, title="Нет RR", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny)
+plotshape(show_skip and c_norr and show_lett,     title="Нет RR (буква)", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny, text="R", textcolor=col_norr)
+
+// прочее (нет меток / стоп? / мало триггеров) — техническое, едва видимое
+plotshape(show_skip and c_other, title="Прочее", style=shape.circle, location=location.belowbar, color=color.new(color.gray, 85), size=size.tiny)
+
+alertcondition(v5_vd == "ВХОД", "Движок v5: ВХОД", "Движок v5: валидный вход")
