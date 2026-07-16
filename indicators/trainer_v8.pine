@@ -10,7 +10,7 @@
 // Наведи мышь на точку в свежем окне — всплывёт чек-лист цепочки решения.
 // Данные: сделки живут медиана 4 бара (80% < 17), одновременно до 5 позиций.
 // ═══════════════════════════════════════════════════════════════════
-indicator("Тренажёр v8 (движок v5) — п.1-4", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Тренажёр v8 (движок v5) — п.1-6", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ══════════════ НАСТРОЙКИ ══════════════
 g1 = "🕯 Триггерные свечи"
@@ -35,6 +35,14 @@ col_slom   = input.color(color.new(color.purple, 0),  "слом",            gro
 col_frz    = input.color(color.new(color.silver, 40), "заморозка",       group=g3)
 col_big    = input.color(color.new(#404040, 20),      "бол.свеча",       group=g3)
 col_norr   = input.color(color.new(color.gray, 75),   "нет RR",          group=g3)
+
+g6 = "🏷 Структура"
+show_fast  = input.bool(true, "Быстрые метки 2/2 (решающие)", group=g6, tooltip="~31/нед. По ним работает движок. Подтверждение через 2 бара.")
+show_slow  = input.bool(true, "Медленные метки 5/5 (глобальная структура)", group=g6, tooltip="~14/нед. Контекст, в решениях движка НЕ участвует. Подтверждение через 5 баров. Каждый медленный пивот — одновременно быстрый, но название метки может отличаться: сравнение идёт с предыдущим медленным.")
+col_fastH  = input.color(color.new(color.green, 30), "быстрые верх/низ", inline="cf", group=g6)
+col_fastL  = input.color(color.new(color.red, 30),   "", inline="cf", group=g6)
+col_slowH  = input.color(color.new(#00c853, 0), "медленные верх/низ", inline="cs", group=g6)
+col_slowL  = input.color(color.new(#ff1744, 0), "", inline="cs", group=g6)
 
 g4 = "📐 Линии сделок"
 show_lines   = input.bool(true, "Линии вход/стоп/тейк", group=g4)
@@ -108,6 +116,32 @@ else if newH
     f_push(not na(higherhigh) ? "HH" : "LH", ph_value, "high")
 else if newL
     f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
+
+// ══════════════ МЕТКИ СТРУКТУРЫ НА ГРАФИКЕ ══════════════
+// быстрые 2/2 — решающие (по ним движок); мелкие, приглушённые
+plotshape(show_fast and not na(higherhigh) ? higherhigh : na, title="HH 2/2", style=shape.triangledown, location=location.abovebar, color=col_fastH, text="HH", textcolor=col_fastH, size=size.tiny, offset=-2)
+plotshape(show_fast and not na(lowerhigh)  ? lowerhigh  : na, title="LH 2/2", style=shape.triangledown, location=location.abovebar, color=col_fastH, text="LH", textcolor=col_fastH, size=size.tiny, offset=-2)
+plotshape(show_fast and not na(higherlow)  ? higherlow  : na, title="HL 2/2", style=shape.triangleup,   location=location.belowbar, color=col_fastL, text="HL", textcolor=col_fastL, size=size.tiny, offset=-2)
+plotshape(show_fast and not na(lowerlow)   ? lowerlow   : na, title="LL 2/2", style=shape.triangleup,   location=location.belowbar, color=col_fastL, text="LL", textcolor=col_fastL, size=size.tiny, offset=-2)
+
+// медленные 5/5 — глобальная структура (контекст); крупнее и ярче, лаг 5 баров
+ph5 = ta.pivothigh(high, 5, 5)
+pl5 = ta.pivotlow (low,  5, 5)
+ph5_value = high[5]
+pl5_value = low[5]
+vw1s = ta.valuewhen(not na(ph5), ph5_value, 1)
+vw2s = ta.valuewhen(not na(ph5), ph5_value, 0)
+hh5 = na(ph5) ? na : vw1s < vw2s ? ph5 : na
+lh5 = na(ph5) ? na : vw1s > vw2s ? ph5 : na
+vw3s = ta.valuewhen(not na(pl5), pl5_value, 1)
+vw4s = ta.valuewhen(not na(pl5), pl5_value, 0)
+hl5 = na(pl5) ? na : vw3s < vw4s ? pl5 : na
+ll5 = na(pl5) ? na : vw3s > vw4s ? pl5 : na
+
+plotshape(show_slow and not na(hh5) ? hh5 : na, title="HH 5/5", style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 100), text="HH", textcolor=col_slowH, size=size.small, offset=-5)
+plotshape(show_slow and not na(lh5) ? lh5 : na, title="LH 5/5", style=shape.labeldown, location=location.abovebar, color=color.new(color.black, 100), text="LH", textcolor=col_slowH, size=size.small, offset=-5)
+plotshape(show_slow and not na(hl5) ? hl5 : na, title="HL 5/5", style=shape.labelup,   location=location.belowbar, color=color.new(color.black, 100), text="HL", textcolor=col_slowL, size=size.small, offset=-5)
+plotshape(show_slow and not na(ll5) ? ll5 : na, title="LL 5/5", style=shape.labelup,   location=location.belowbar, color=color.new(color.black, 100), text="LL", textcolor=col_slowL, size=size.small, offset=-5)
 
 // ══════════════ ПОРОГ РАЗМЕРА ══════════════
 var float[] trig_sz = array.new_float()
