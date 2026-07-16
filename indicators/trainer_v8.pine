@@ -54,6 +54,7 @@ show_lv4h = input.bool(true, "4H", inline="lv", group=g7)
 show_lv1d = input.bool(true, "1D", inline="lv", group=g7)
 show_lvlh = input.bool(true, "LH/HL уровни (точечный стиль)", group=g7, tooltip="Неперебитые LH (сверху) и HL (снизу) — кандидаты в магниты движка. HH/LL — пунктир, LH/HL — точки.")
 lv_n      = input.int(3, "Ближайших к цене с каждой стороны", minval=1, maxval=10, group=g7, tooltip="Живых уровней бывает ~130 одновременно (медиана по 9 годам золота), большинство — древние и далёкие. Рисуются только N ближайших сверху (HH) и снизу (LL) на каждый ТФ. Уровни видны на правом крае и на курсоре bar replay.")
+lv_maxd   = input.float(5.0, "Не дальше от цены, %", minval=0.5, maxval=50, step=0.5, group=g7, tooltip="Уровни дальше этого расстояния не рисуются: они не работают как контекст (медианный тейк движка 0.7%), но растягивают шкалу цен — свечи сжимаются в полоску.")
 lv_transp = input.int(40, "Прозрачность", minval=0, maxval=90, group=g7)
 col_lvH   = input.color(color.new(color.green, 0), "верх/низ", inline="lc", group=g7)
 col_lvL   = input.color(color.new(color.red, 0),   "", inline="lc", group=g7)
@@ -519,12 +520,12 @@ f_draw_nearest(_p, _b, _col, _w, _style) =>
             for i = 0 to array.size(_p) - 1
                 if not array.get(used, i)
                     d = math.abs(array.get(_p, i) - close)
-                    if d < bestd
+                    if d < bestd and d <= close * lv_maxd / 100
                         bestd := d
                         best := i
             if best >= 0
                 array.set(used, best, true)
-                x1 = math.max(array.get(_b, best), bar_index - 9000)
+                x1 = math.max(math.max(array.get(_b, best), bar_index - 9000), 0)
                 array.push(lv_lines, line.new(x1, array.get(_p, best), bar_index, array.get(_p, best), color=color.new(_col, lv_transp), width=_w, style=_style, extend=extend.right))
 
 if barstate.islast
