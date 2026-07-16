@@ -52,6 +52,7 @@ g7 = "📏 Уровни HH/LL (живые, N ближайших)"
 show_lv1h = input.bool(true, "1H", inline="lv", group=g7)
 show_lv4h = input.bool(true, "4H", inline="lv", group=g7)
 show_lv1d = input.bool(true, "1D", inline="lv", group=g7)
+show_lvlh = input.bool(true, "LH/HL уровни (точечный стиль)", group=g7, tooltip="Неперебитые LH (сверху) и HL (снизу) — кандидаты в магниты движка. HH/LL — пунктир, LH/HL — точки.")
 lv_n      = input.int(3, "Ближайших к цене с каждой стороны", minval=1, maxval=10, group=g7, tooltip="Живых уровней бывает ~130 одновременно (медиана по 9 годам золота), большинство — древние и далёкие. Рисуются только N ближайших сверху (HH) и снизу (LL) на каждый ТФ. Уровни видны на правом крае и на курсоре bar replay.")
 lv_transp = input.int(40, "Прозрачность", minval=0, maxval=90, group=g7)
 col_lvH   = input.color(color.new(color.green, 0), "верх/низ", inline="lc", group=g7)
@@ -395,12 +396,23 @@ var int[]   hh1_b = array.new_int()
 var float[] ll1_p = array.new_float()
 var int[]   ll1_b = array.new_int()
 
+var float[] lh1_p = array.new_float()
+var int[]   lh1_b = array.new_int()
+var float[] hl1_p = array.new_float()
+var int[]   hl1_b = array.new_int()
+
 if not na(higherhigh)
     array.push(hh1_p, ph_value)
     array.push(hh1_b, bar_index - 2)
 if not na(lowerlow)
     array.push(ll1_p, pl_value)
     array.push(ll1_b, bar_index - 2)
+if not na(lowerhigh)
+    array.push(lh1_p, ph_value)
+    array.push(lh1_b, bar_index - 2)
+if not na(higherlow)
+    array.push(hl1_p, pl_value)
+    array.push(hl1_b, bar_index - 2)
 
 // 4H и 1D через request.security (как в v7, lookahead_off)
 ph4 = request.security(syminfo.tickerid, "240", ta.pivothigh(high, 2, 2), lookahead=barmerge.lookahead_off)
@@ -410,9 +422,11 @@ pl4v = request.security(syminfo.tickerid, "240", low[2],  lookahead=barmerge.loo
 v14 = ta.valuewhen(not na(ph4), ph4v, 1)
 v24 = ta.valuewhen(not na(ph4), ph4v, 0)
 hh4 = na(ph4) ? na : v14 < v24 ? ph4 : na
+lh4 = na(ph4) ? na : v14 > v24 ? ph4 : na
 v34 = ta.valuewhen(not na(pl4), pl4v, 1)
 v44 = ta.valuewhen(not na(pl4), pl4v, 0)
 ll4 = na(pl4) ? na : v34 > v44 ? pl4 : na
+hl4 = na(pl4) ? na : v34 < v44 ? pl4 : na
 
 phd = request.security(syminfo.tickerid, "D", ta.pivothigh(high, 2, 2), lookahead=barmerge.lookahead_off)
 pld = request.security(syminfo.tickerid, "D", ta.pivotlow (low,  2, 2), lookahead=barmerge.lookahead_off)
@@ -421,9 +435,11 @@ pldv = request.security(syminfo.tickerid, "D", low[2],  lookahead=barmerge.looka
 v1d = ta.valuewhen(not na(phd), phdv, 1)
 v2d = ta.valuewhen(not na(phd), phdv, 0)
 hhd = na(phd) ? na : v1d < v2d ? phd : na
+lhd = na(phd) ? na : v1d > v2d ? phd : na
 v3d = ta.valuewhen(not na(pld), pldv, 1)
 v4d = ta.valuewhen(not na(pld), pldv, 0)
 lld = na(pld) ? na : v3d > v4d ? pld : na
+hld = na(pld) ? na : v3d < v4d ? pld : na
 
 var float[] hh4_p = array.new_float()
 var int[]   hh4_b = array.new_int()
@@ -434,18 +450,39 @@ var int[]   hhd_b = array.new_int()
 var float[] lld_p = array.new_float()
 var int[]   lld_b = array.new_int()
 
+var float[] lh4_p = array.new_float()
+var int[]   lh4_b = array.new_int()
+var float[] hl4_p = array.new_float()
+var int[]   hl4_b = array.new_int()
+var float[] lhd_p = array.new_float()
+var int[]   lhd_b = array.new_int()
+var float[] hld_p = array.new_float()
+var int[]   hld_b = array.new_int()
+
 if not na(hh4) and hh4 != nz(hh4[1])
     array.push(hh4_p, hh4)
     array.push(hh4_b, bar_index)
 if not na(ll4) and ll4 != nz(ll4[1])
     array.push(ll4_p, ll4)
     array.push(ll4_b, bar_index)
+if not na(lh4) and lh4 != nz(lh4[1])
+    array.push(lh4_p, lh4)
+    array.push(lh4_b, bar_index)
+if not na(hl4) and hl4 != nz(hl4[1])
+    array.push(hl4_p, hl4)
+    array.push(hl4_b, bar_index)
 if not na(hhd) and hhd != nz(hhd[1])
     array.push(hhd_p, hhd)
     array.push(hhd_b, bar_index)
 if not na(lld) and lld != nz(lld[1])
     array.push(lld_p, lld)
     array.push(lld_b, bar_index)
+if not na(lhd) and lhd != nz(lhd[1])
+    array.push(lhd_p, lhd)
+    array.push(lhd_b, bar_index)
+if not na(hld) and hld != nz(hld[1])
+    array.push(hld_p, hld)
+    array.push(hld_b, bar_index)
 
 // смерть пробитых (правило: уровень существует, пока не пробит)
 f_purge(_p, _b, _isHH) =>
@@ -459,15 +496,21 @@ f_purge(_p, _b, _isHH) =>
 
 f_purge(hh1_p, hh1_b, true)
 f_purge(ll1_p, ll1_b, false)
+f_purge(lh1_p, lh1_b, true)
+f_purge(hl1_p, hl1_b, false)
 f_purge(hh4_p, hh4_b, true)
 f_purge(ll4_p, ll4_b, false)
+f_purge(lh4_p, lh4_b, true)
+f_purge(hl4_p, hl4_b, false)
 f_purge(hhd_p, hhd_b, true)
 f_purge(lld_p, lld_b, false)
+f_purge(lhd_p, lhd_b, true)
+f_purge(hld_p, hld_b, false)
 
 // отрисовка: только на правом крае / курсоре replay, только N ближайших
 var line[] lv_lines = array.new<line>()
 
-f_draw_nearest(_p, _b, _col, _w) =>
+f_draw_nearest(_p, _b, _col, _w, _style) =>
     if array.size(_p) > 0
         bool[] used = array.new_bool(array.size(_p), false)
         for k = 1 to lv_n
@@ -482,20 +525,29 @@ f_draw_nearest(_p, _b, _col, _w) =>
             if best >= 0
                 array.set(used, best, true)
                 x1 = math.max(array.get(_b, best), bar_index - 9000)
-                array.push(lv_lines, line.new(x1, array.get(_p, best), bar_index, array.get(_p, best), color=color.new(_col, lv_transp), width=_w, style=line.style_dashed, extend=extend.right))
+                array.push(lv_lines, line.new(x1, array.get(_p, best), bar_index, array.get(_p, best), color=color.new(_col, lv_transp), width=_w, style=_style, extend=extend.right))
 
 if barstate.islast
     while array.size(lv_lines) > 0
         line.delete(array.pop(lv_lines))
     if show_lv1h
-        f_draw_nearest(hh1_p, hh1_b, col_lvH, 1)
-        f_draw_nearest(ll1_p, ll1_b, col_lvL, 1)
+        f_draw_nearest(hh1_p, hh1_b, col_lvH, 1, line.style_dashed)
+        f_draw_nearest(ll1_p, ll1_b, col_lvL, 1, line.style_dashed)
+        if show_lvlh
+            f_draw_nearest(lh1_p, lh1_b, col_lvH, 1, line.style_dotted)
+            f_draw_nearest(hl1_p, hl1_b, col_lvL, 1, line.style_dotted)
     if show_lv4h
-        f_draw_nearest(hh4_p, hh4_b, col_lvH, 2)
-        f_draw_nearest(ll4_p, ll4_b, col_lvL, 2)
+        f_draw_nearest(hh4_p, hh4_b, col_lvH, 2, line.style_dashed)
+        f_draw_nearest(ll4_p, ll4_b, col_lvL, 2, line.style_dashed)
+        if show_lvlh
+            f_draw_nearest(lh4_p, lh4_b, col_lvH, 2, line.style_dotted)
+            f_draw_nearest(hl4_p, hl4_b, col_lvL, 2, line.style_dotted)
     if show_lv1d
-        f_draw_nearest(hhd_p, hhd_b, col_lvH, 3)
-        f_draw_nearest(lld_p, lld_b, col_lvL, 3)
+        f_draw_nearest(hhd_p, hhd_b, col_lvH, 3, line.style_dashed)
+        f_draw_nearest(lld_p, lld_b, col_lvL, 3, line.style_dashed)
+        if show_lvlh
+            f_draw_nearest(lhd_p, lhd_b, col_lvH, 3, line.style_dotted)
+            f_draw_nearest(hld_p, hld_b, col_lvL, 3, line.style_dotted)
 
 // ══════════════ ТАБЛИЦА-ЧЕКЛИСТ ══════════════
 tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
