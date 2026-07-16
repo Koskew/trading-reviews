@@ -10,7 +10,7 @@
 // Наведи мышь на точку в свежем окне — всплывёт чек-лист цепочки решения.
 // Данные: сделки живут медиана 4 бара (80% < 17), одновременно до 5 позиций.
 // ═══════════════════════════════════════════════════════════════════
-indicator("Тренажёр v8 (движок v5) — п.1-8", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Тренажёр v8 (движок v5) — п.1-10", overlay=true, max_lines_count=500, max_labels_count=500)
 
 // ══════════════ НАСТРОЙКИ ══════════════
 g1 = "🕯 Триггерные свечи"
@@ -54,10 +54,15 @@ show_lv4h = input.bool(true, "4H", inline="lv", group=g7)
 show_lv1d = input.bool(true, "1D", inline="lv", group=g7)
 show_lvlh = input.bool(true, "LH/HL уровни (точечный стиль)", group=g7, tooltip="Неперебитые LH (сверху) и HL (снизу) — кандидаты в магниты движка. HH/LL — пунктир, LH/HL — точки.")
 lv_n      = input.int(3, "Ближайших к цене с каждой стороны", minval=1, maxval=10, group=g7, tooltip="Живых уровней бывает ~130 одновременно (медиана по 9 годам золота), большинство — древние и далёкие. Рисуются только N ближайших сверху (HH) и снизу (LL) на каждый ТФ. Уровни видны на правом крае и на курсоре bar replay.")
-lv_maxd   = input.float(5.0, "Не дальше от цены, %", minval=0.5, maxval=50, step=0.5, group=g7, tooltip="Уровни дальше этого расстояния не рисуются: они не работают как контекст (медианный тейк движка 0.7%), но растягивают шкалу цен — свечи сжимаются в полоску.")
 lv_transp = input.int(40, "Прозрачность", minval=0, maxval=90, group=g7)
 col_lvH   = input.color(color.new(color.green, 0), "верх/низ", inline="lc", group=g7)
 col_lvL   = input.color(color.new(color.red, 0),   "", inline="lc", group=g7)
+
+g8 = "〰 Зиг-заг"
+show_zz  = input.bool(true, "Показывать зиг-заг", group=g8)
+zz_len   = input.int(3, "Длина", minval=1, maxval=20, group=g8)
+zz_width = input.int(2, "Толщина", minval=1, maxval=4, group=g8)
+zz_bars  = input.int(3000, "Зиг-заг за последние N баров", minval=100, group=g8, tooltip="Зиг-заг делит лимит 500 линий с линиями сделок и уровнями.")
 
 g5 = "💬 Чек-листы и таблица"
 show_tips   = input.bool(true, "Tooltip-точки (наведи мышь — чек-лист)", group=g5)
@@ -279,6 +284,10 @@ var array<line>  P_lnen = array.new<line>()
 var array<line>  P_lnsl = array.new<line>()
 var array<line>  P_lntp = array.new<line>()
 
+// закрытые сделки движка — для счётчика R (R = RR при TP, -1 при SL, как эталон)
+var float[] R_val = array.new_float()
+var int[]   R_tim = array.new_int()
+
 in_line = last_bar_index - bar_index <= v5_line_bars
 in_tip  = last_bar_index - bar_index <= v5_tip_bars
 
@@ -299,6 +308,9 @@ if array.size(P_en) > 0
             hit_tp = plong ? high >= ptp : low  <= ptp
             if hit_sl or hit_tp
                 res_sl = hit_sl  // SL и TP в одном баре = SL (консервативно, как движок)
+                pen = array.get(P_en, k)
+                array.push(R_val, res_sl ? -1.0 : math.abs(ptp - pen) / math.abs(pen - psl))
+                array.push(R_tim, time)
                 if show_lines and in_line
                     label.new(bar_index, res_sl ? psl : ptp, res_sl ? "SL" : "TP", style=res_sl ? label.style_label_up : label.style_label_down, color=res_sl ? color.new(color.red, 0) : color.new(color.green, 0), textcolor=color.white, size=size.small)
                 array.remove(P_long, k)
@@ -520,12 +532,12 @@ f_draw_nearest(_p, _b, _col, _w, _style) =>
             for i = 0 to array.size(_p) - 1
                 if not array.get(used, i)
                     d = math.abs(array.get(_p, i) - close)
-                    if d < bestd and d <= close * lv_maxd / 100
+                    if d < bestd
                         bestd := d
                         best := i
             if best >= 0
                 array.set(used, best, true)
-                x1 = math.max(math.max(array.get(_b, best), bar_index - 9000), 0)
+                x1 = math.max(array.get(_b, best), bar_index - 9000)
                 array.push(lv_lines, line.new(x1, array.get(_p, best), bar_index, array.get(_p, best), color=color.new(_col, lv_transp), width=_w, style=_style, extend=extend.right))
 
 if barstate.islast
@@ -552,7 +564,7 @@ if barstate.islast
 
 // ══════════════ ТАБЛИЦА-ЧЕКЛИСТ ══════════════
 tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
-var table T = table.new(tp_, 2, 5, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+var table T = table.new(tp_, 2, 6, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
 
 if show_tbl and barstate.islast
     hdrc = color.new(color.silver, 0)
@@ -569,3 +581,56 @@ if show_tbl and barstate.islast
     table.cell(T, 1, 3, na(last_time) ? "—" : str.format_time(last_time, "dd.MM HH:mm", tbl_tz), text_color=color.white, text_halign=text.align_left, text_size=size.small)
     table.cell(T, 0, 4, "Чек-лист", text_color=hdrc, text_halign=text.align_left, text_valign=text.align_top, text_size=size.small)
     table.cell(T, 1, 4, last_chk, text_color=color.new(color.aqua, 0), text_halign=text.align_left, text_size=size.small)
+    // счётчик R движка: R = RR при TP, -1 при SL; «всё» = загруженная история графика
+    float r30 = 0.0
+    float r90 = 0.0
+    float rall = 0.0
+    int   n30 = 0
+    int   n90 = 0
+    if array.size(R_val) > 0
+        for i = 0 to array.size(R_val) - 1
+            rv = array.get(R_val, i)
+            age = time - array.get(R_tim, i)
+            rall += rv
+            if age <= 1000 * 60 * 60 * 24 * 30
+                r30 += rv
+                n30 += 1
+            if age <= 1000 * 60 * 60 * 24 * 90
+                r90 += rv
+                n90 += 1
+    rtxt = "30д: " + (r30 >= 0 ? "+" : "") + str.tostring(r30, "#.#") + "R (" + str.tostring(n30) + ") | 90д: " + (r90 >= 0 ? "+" : "") + str.tostring(r90, "#.#") + "R (" + str.tostring(n90) + ") | всё: " + (rall >= 0 ? "+" : "") + str.tostring(rall, "#.#") + "R (" + str.tostring(array.size(R_val)) + ")"
+    table.cell(T, 0, 5, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 5, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+
+// ══════════════ ЗИГ-ЗАГ (логика v3, окно N баров) ══════════════
+to_up_zz = high >= ta.highest(zz_len)
+to_dn_zz = low  <= ta.lowest(zz_len)
+
+var int zz_trend = 1
+zz_trend := nz(zz_trend[1], 1)
+zz_trend := zz_trend == 1 and to_dn_zz ? -1 : zz_trend == -1 and to_up_zz ? 1 : zz_trend
+
+last_up_since = ta.barssince(to_up_zz[1])
+last_dn_since = ta.barssince(to_dn_zz[1])
+
+zz_low_val  = ta.lowest (nz(last_up_since > 0 ? last_up_since : 1, 1))
+zz_high_val = ta.highest(nz(last_dn_since > 0 ? last_dn_since : 1, 1))
+
+zz_low_bar  = bar_index - ta.barssince(zz_low_val  == low)
+zz_high_bar = bar_index - ta.barssince(zz_high_val == high)
+
+var float zz_prev_val = na
+var int   zz_prev_bar = na
+
+in_zz = last_bar_index - bar_index <= zz_bars
+if ta.change(zz_trend) != 0
+    if zz_trend == 1
+        if show_zz and not na(zz_prev_val) and in_zz
+            line.new(zz_prev_bar, zz_prev_val, zz_low_bar, zz_low_val, color=zz_low_val > zz_prev_val ? color.new(color.green, 0) : color.new(color.red, 0), width=zz_width)
+        zz_prev_val := zz_low_val
+        zz_prev_bar := zz_low_bar
+    if zz_trend == -1
+        if show_zz and not na(zz_prev_val) and in_zz
+            line.new(zz_prev_bar, zz_prev_val, zz_high_bar, zz_high_val, color=zz_high_val > zz_prev_val ? color.new(color.green, 0) : color.new(color.red, 0), width=zz_width)
+        zz_prev_val := zz_high_val
+        zz_prev_bar := zz_high_bar
