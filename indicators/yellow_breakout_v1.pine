@@ -1,0 +1,272 @@
+//@version=5
+// ═══════════════════════════════════════════════════════════════════
+// ЖЁЛТАЯ ТОЧКА: ПРОБОЙ v1 — игровая система, построенная на данных.
+// Жёлтая точка = ПРИГОТОВИТЬСЯ (не вход). Вход = пробой её экстремума.
+//
+// ПРАВИЛА (все проверены на золоте 1H, train 2017-21 / test 2022-26):
+//   1. Жёлтая свеча (одна из 40 форм нерешительности) → выставляем два
+//      стоп-ордера: buy-stop за high, sell-stop за low. Ждём W=3 бара.
+//   2. Пробой стороны → вход по направлению пробоя. Обе стороны в одном
+//      баре → отмена. Не пробило за W баров → отмена.
+//   3. Стоп за противоположной стороной свечи ±0.1%. Тейк = 2.5R. Не двигаются.
+//   4. Сессия: ордера армируются только 08-20 UTC (ночь — минус по данным).
+//   5. Предохранитель: неделя достигла -3R → стоп до понедельника
+//      (режет хвост: худшая неделя -8R → -3.5R без потери итога).
+//   6. Одна позиция. Новая жёлтая точка обновляет ожидание.
+//
+// РЕЗУЛЬТАТЫ (движок engine/exp_yellow_breakout.py, cfg W=3 k=2.5 ws=3 s08-20):
+//   TRAIN +142.5R (834 сделок, WR 33.5%) | TEST +116.0R (843, WR 32.5%)
+//   Все 5 тестовых лет в плюсе (2024: +4R — год, где v5 дал -40.8R).
+//   Недели: ~51% плюсовых, средняя +0.5R/нед, худшая -3.5R, до 8 минусовых подряд.
+//   ЧЕСТНО: плюс КАЖДУЮ неделю не существует; плюс — матожидание недели.
+//   Издержки ~0.05-0.1R/сделку съедают 30-65% итога — учитывать при риске.
+// ═══════════════════════════════════════════════════════════════════
+indicator("Жёлтая точка: ПРОБОЙ v1", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ══════════════ НАСТРОЙКИ ══════════════
+g1 = "🕯 Жёлтая точка"
+tol = input.float(4.0, "Допуск формы ±%", minval=1.0, maxval=15.0, group=g1)
+
+g2 = "⚙ Система (эталон = данные)"
+W_       = input.int(3, "Окно пробоя, баров (эталон 3)", minval=1, maxval=10, group=g2)
+k_       = input.float(2.5, "Тейк, R (эталон 2.5)", minval=1.0, step=0.5, group=g2)
+buf_     = input.float(0.1, "Буфер стопа, % (эталон 0.1)", minval=0.0, step=0.05, group=g2)
+use_ws   = input.bool(true, "Недельный предохранитель", group=g2, tooltip="Неделя достигла -X R → торговля стоит до понедельника. На данных: итог не меняет, худшую неделю сжимает с -8R до -3.5R.")
+ws_      = input.float(3.0, "Предохранитель, -R (эталон 3)", minval=1.0, step=0.5, group=g2)
+use_sess = input.bool(true, "Сессионный фильтр", group=g2, tooltip="Армировать ордера только в часы сессии. Ночь 00-07 UTC на золоте стабильно минусовая (данные 2017-21).")
+sess_a   = input.int(8, "Сессия: с (час UTC)", minval=0, maxval=23, group=g2)
+sess_b   = input.int(20, "Сессия: по (час UTC, включ.)", minval=0, maxval=23, group=g2)
+
+g3 = "🎨 Отображение"
+show_dots  = input.bool(true, "Жёлтые/серые точки", group=g3)
+show_pend  = input.bool(true, "Уровни ожидания пробоя", group=g3)
+show_trade = input.bool(true, "Линии сделок", group=g3)
+draw_bars  = input.int(4000, "Сделки за последние N баров", minval=100, group=g3)
+show_tbl   = input.bool(true, "Таблица", group=g3)
+tbl_pos    = input.string("верх-право", "Позиция таблицы", options=["верх-право","верх-лево","низ-право","низ-лево"], group=g3)
+tbl_tz     = input.string("Europe/Kyiv", "Часовой пояс таблицы", group=g3)
+
+// ══════════════ ЖЁЛТАЯ ТОЧКА (40 шаблонов) ══════════════
+range_    = high - low
+body_     = math.abs(close - open)
+upper_    = open > close ? high - open  : high - close
+lower_    = open > close ? close - low  : open  - low
+body_pct  = range_ > 0 ? body_  / range_ * 100 : 0.0
+upper_pct = range_ > 0 ? upper_ / range_ * 100 : 0.0
+lower_pct = range_ > 0 ? lower_ / range_ * 100 : 0.0
+
+tb = array.from(12.6,14.7,17.0,32.0,20.2,4.1,23.0,27.9,30.7,35.2,24.5,41.9,26.0,25.9,11.6,23.3,49.3,14.0,18.3,25.4,27.9,45.7,29.2,40.6,41.9,10.4,41.5,23.6,32.2,18.8,35.5,32.2,54.2,10.8,47.3,16.0,21.6,19.8,9.9,27.5)
+tu = array.from(33.7,37.3,37.7,27.8,29.4,40.4,35.7,35.3,41.0,35.7,28.4,22.0,39.6,37.4,46.0,31.5,21.5,27.5,47.3,35.6,26.2,24.8,36.3,36.7,26.8,35.6,20.7,34.5,36.4,46.2,38.6,33.6,21.6,44.1,22.9,45.2,42.8,45.2,41.5,30.7)
+tl = array.from(53.7,48.0,45.3,40.2,50.4,55.5,41.3,36.8,28.3,29.1,71.6,36.0,34.5,36.7,42.5,45.2,29.2,58.5,34.4,39.0,46.0,29.5,34.5,22.6,31.3,54.0,37.9,41.9,31.4,34.9,25.8,34.2,24.2,45.1,29.8,38.8,35.5,35.0,48.6,41.8)
+
+shape_ok = false
+for i = 0 to 39
+    if math.abs(body_pct  - array.get(tb, i)) <= tol and
+       math.abs(upper_pct - array.get(tu, i)) <= tol and
+       math.abs(lower_pct - array.get(tl, i)) <= tol
+        shape_ok := true
+        break
+
+// ══════════════ СОСТОЯНИЕ СИСТЕМЫ ══════════════
+var int   pos       = 0      // 0 флэт, 1 лонг, -1 шорт
+var float en  = na
+var float sl  = na
+var float tp  = na
+var int   pos_bar   = na
+var bool  pend_on   = false
+var float pend_hi   = na
+var float pend_lo   = na
+var int   pend_until = na
+var int   pend_time = na
+var int   wk_cur    = -1
+var float wk_r      = 0.0
+var float[] R_val = array.new_float()
+var int[]   R_tim = array.new_int()
+var line  ln_en = na
+var line  ln_sl = na
+var line  ln_tp = na
+var line  ln_ph = na
+var line  ln_pl = na
+
+in_draw = last_bar_index - bar_index <= draw_bars
+hour_utc = hour(time, "Etc/UTC")
+sess_ok = not use_sess or (hour_utc >= sess_a and hour_utc <= sess_b)
+
+// вердикт бара — для точек и таблицы
+string dot_state = na   // "АРМ" / "в позиции" / "сессия" / "предохранитель"
+
+if barstate.isconfirmed
+    // неделя (weekofyear может расходиться с ISO на стыке годов — некритично)
+    wk_now = year(time, "Etc/UTC") * 100 + weekofyear(time, "Etc/UTC")
+    if wk_now != wk_cur
+        wk_cur := wk_now
+        wk_r := 0.0
+    // 1) сопровождение позиции: SL первым (консервативно)
+    if pos != 0
+        hit_sl = pos > 0 ? low <= sl : high >= sl
+        hit_tp = pos > 0 ? high >= tp : low <= tp
+        if hit_sl or hit_tp
+            r_ = hit_sl ? -1.0 : k_
+            array.push(R_val, r_)
+            array.push(R_tim, time)
+            wk_r += r_
+            if show_trade and in_draw
+                label.new(bar_index, hit_sl ? sl : tp, hit_sl ? "SL" : "TP", style=hit_sl ? label.style_label_up : label.style_label_down, color=hit_sl ? color.new(color.red, 0) : color.new(color.green, 0), textcolor=color.white, size=size.small)
+            if not na(ln_en)
+                line.set_x2(ln_en, bar_index)
+                line.set_x2(ln_sl, bar_index)
+                line.set_x2(ln_tp, bar_index)
+                ln_en := na
+                ln_sl := na
+                ln_tp := na
+            pos := 0
+    blocked = use_ws and wk_r <= -ws_
+    // 2) ожидание пробоя
+    if pos == 0 and pend_on and not blocked
+        if bar_index > pend_until
+            pend_on := false
+        else
+            up = high >= pend_hi
+            dn = low <= pend_lo
+            if up and dn
+                pend_on := false   // обе стороны в одном баре — отмена
+            else if up or dn
+                pos := up ? 1 : -1
+                en := up ? math.max(open, pend_hi) : math.min(open, pend_lo)
+                sl := up ? pend_lo * (1 - buf_ / 100) : pend_hi * (1 + buf_ / 100)
+                risk = math.abs(en - sl)
+                tp := pos > 0 ? en + k_ * risk : en - k_ * risk
+                pos_bar := bar_index
+                pend_on := false
+                if show_trade and in_draw
+                    ln_en := line.new(bar_index, en, bar_index + 1, en, color=color.new(color.blue, 0), width=2)
+                    ln_sl := line.new(bar_index, sl, bar_index + 1, sl, color=color.new(color.red, 0), width=2)
+                    ln_tp := line.new(bar_index, tp, bar_index + 1, tp, color=color.new(color.green, 0), width=2)
+                    label.new(bar_index, en, (pos > 0 ? "▲ LONG пробой" : "▼ SHORT пробой"), style=pos > 0 ? label.style_label_up : label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small)
+                // вход и стоп в одном баре — консервативно SL
+                hit0 = pos > 0 ? low <= sl : high >= sl
+                if hit0
+                    array.push(R_val, -1.0)
+                    array.push(R_tim, time)
+                    wk_r -= 1.0
+                    if show_trade and in_draw
+                        label.new(bar_index, sl, "SL", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small)
+                    if not na(ln_en)
+                        line.set_x2(ln_en, bar_index)
+                        line.set_x2(ln_sl, bar_index)
+                        line.set_x2(ln_tp, bar_index)
+                        ln_en := na
+                        ln_sl := na
+                        ln_tp := na
+                    pos := 0
+    // 3) новая жёлтая точка (закрытие бара) — обновляет ожидание
+    if shape_ok
+        if pos != 0
+            dot_state := "в позиции"
+        else if blocked
+            dot_state := "предохранитель"
+        else if not sess_ok
+            dot_state := "сессия"
+        else
+            dot_state := "АРМ"
+            pend_hi := high
+            pend_lo := low
+            pend_until := bar_index + W_
+            pend_time := time
+            pend_on := true
+
+// линии позиции и ожидания тянем за текущим баром
+if pos != 0 and not na(ln_en)
+    line.set_x2(ln_en, bar_index)
+    line.set_x2(ln_sl, bar_index)
+    line.set_x2(ln_tp, bar_index)
+if show_pend
+    if pend_on and pos == 0
+        if na(ln_ph)
+            ln_ph := line.new(bar_index, pend_hi, bar_index + 1, pend_hi, color=color.new(color.aqua, 0), width=1, style=line.style_dashed)
+            ln_pl := line.new(bar_index, pend_lo, bar_index + 1, pend_lo, color=color.new(color.fuchsia, 0), width=1, style=line.style_dashed)
+        line.set_xy1(ln_ph, pend_until - W_, pend_hi)
+        line.set_xy2(ln_ph, bar_index + 1, pend_hi)
+        line.set_xy1(ln_pl, pend_until - W_, pend_lo)
+        line.set_xy2(ln_pl, bar_index + 1, pend_lo)
+    else if not na(ln_ph)
+        line.delete(ln_ph)
+        line.delete(ln_pl)
+        ln_ph := na
+        ln_pl := na
+
+// ══════════════ ТОЧКИ ══════════════
+c_arm  = dot_state == "АРМ"
+c_skip = not na(dot_state) and not c_arm
+plotshape(show_dots and c_arm,  title="Жёлтая точка (арм)", style=shape.circle, location=location.belowbar, color=color.new(color.yellow, 0), size=size.small)
+plotshape(show_dots and c_skip, title="Точка (пропуск)", style=shape.circle, location=location.belowbar, color=color.new(color.gray, 40), size=size.tiny)
+
+alertcondition(c_arm, "Пробой v1: точка армирована", "Жёлтая точка армирована — выставлены стоп-ордера на пробой")
+alertcondition(barstate.isconfirmed and pos == 1 and pos_bar == bar_index, "Пробой v1: LONG", "Вход LONG по пробою жёлтой точки")
+alertcondition(barstate.isconfirmed and pos == -1 and pos_bar == bar_index, "Пробой v1: SHORT", "Вход SHORT по пробою жёлтой точки")
+
+// ══════════════ ТАБЛИЦА — ЛОГИКА СИСТЕМЫ ЦЕЛИКОМ ══════════════
+tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
+var table T = table.new(tp_, 2, 9, bgcolor=color.new(#000000, 12), border_width=1, border_color=color.new(color.gray, 70))
+
+if show_tbl and barstate.islast
+    hdrc = color.new(color.silver, 0)
+    blocked_now = use_ws and wk_r <= -ws_
+    // 0: СТАТУС — главное состояние машины
+    stxt = blocked_now ? "СТОП-НЕДЕЛЯ (" + str.tostring(wk_r, "#.#") + "R) — до понедельника" : pos == 1 ? "ПОЗИЦИЯ LONG" : pos == -1 ? "ПОЗИЦИЯ SHORT" : pend_on ? "ЖДУ ПРОБОЙ — осталось " + str.tostring(math.max(0, pend_until - bar_index)) + " бар." : "ФЛЭТ — жду жёлтую точку"
+    scol = blocked_now ? color.new(color.red, 0) : pos != 0 ? color.new(color.blue, 0) : pend_on ? color.new(color.yellow, 0) : color.gray
+    table.cell(T, 0, 0, "СТАТУС", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Правила: жёлтая свеча → стоп-ордера за high/low на " + str.tostring(W_) + " бара. Пробой = вход. Стоп за свечой ±" + str.tostring(buf_, "#.##") + "%, тейк " + str.tostring(k_, "#.#") + "R, не двигаются. Одна позиция. Обе стороны в одном баре = отмена.")
+    table.cell(T, 1, 0, stxt, text_color=scol, text_halign=text.align_left, text_size=size.small)
+    // 1: базовая свеча
+    btxt = pend_on or pos != 0 ? (na(pend_time) ? "—" : str.format_time(pend_time, "dd.MM HH:mm", tbl_tz)) + "  H " + str.tostring(pend_hi, format.mintick) + " / L " + str.tostring(pend_lo, format.mintick) : "—"
+    table.cell(T, 0, 1, "Базовая свеча", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Последняя армированная жёлтая точка: её high/low = уровни стоп-ордеров")
+    table.cell(T, 1, 1, btxt, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
+    // 2-3: ордера
+    table.cell(T, 0, 2, "Buy-stop", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Пробой high базовой свечи → LONG")
+    table.cell(T, 1, 2, pend_on and pos == 0 ? str.tostring(pend_hi, format.mintick) + "  → LONG" : "—", text_color=pend_on and pos == 0 ? color.new(color.aqua, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 3, "Sell-stop", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Пробой low базовой свечи → SHORT")
+    table.cell(T, 1, 3, pend_on and pos == 0 ? str.tostring(pend_lo, format.mintick) + "  → SHORT" : "—", text_color=pend_on and pos == 0 ? color.new(color.fuchsia, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
+    // 4: позиция
+    ptxt = pos == 0 ? "нет" : (pos > 0 ? "LONG " : "SHORT ") + str.tostring(en, format.mintick) + " | SL " + str.tostring(sl, format.mintick) + " | TP " + str.tostring(tp, format.mintick) + " (" + str.tostring(k_, "#.#") + "R)"
+    table.cell(T, 0, 4, "Позиция", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Риск = |вход − стоп| = 1R. Тейк = " + str.tostring(k_, "#.#") + "R. Стоп и тейк НЕ двигаются.")
+    table.cell(T, 1, 4, ptxt, text_color=pos != 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
+    // 5: сессия
+    sesst = not use_sess ? "фильтр выключен" : sess_ok ? "открыта (" + str.tostring(sess_a, "#") + "-" + str.tostring(sess_b, "#") + " UTC)" : "ЗАКРЫТА — армирование с " + str.tostring(sess_a, "#") + ":00 UTC"
+    table.cell(T, 0, 5, "Сессия", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Ночь 00-07 UTC на золоте минусовая по данным 2017-21. Вне сессии точки НЕ армируются (открытые позиции сопровождаются).")
+    table.cell(T, 1, 5, sesst, text_color=not use_sess ? color.gray : sess_ok ? color.lime : color.new(color.orange, 0), text_halign=text.align_left, text_size=size.small)
+    // 6: неделя и предохранитель
+    wkt = (wk_r >= 0 ? "+" : "") + str.tostring(wk_r, "#.#") + "R" + (use_ws ? (blocked_now ? "  |  ПРЕДОХРАНИТЕЛЬ СРАБОТАЛ" : "  |  стоп при -" + str.tostring(ws_, "#.#") + "R") : "")
+    table.cell(T, 0, 6, "Неделя", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="R с начала недели (пн, UTC). Предохранитель: неделя ≤ -" + str.tostring(ws_, "#.#") + "R → торговля стоит до понедельника. На данных сжал худшую неделю с -8R до -3.5R без потери итога.")
+    table.cell(T, 1, 6, wkt, text_color=blocked_now ? color.new(color.red, 0) : wk_r >= 0 ? color.lime : color.new(color.orange, 0), text_halign=text.align_left, text_size=size.small)
+    // 7: счётчик R
+    float r30 = 0.0
+    float r90 = 0.0
+    float rall = 0.0
+    int n30 = 0
+    int n90 = 0
+    int nw = 0
+    if array.size(R_val) > 0
+        for i = 0 to array.size(R_val) - 1
+            rv = array.get(R_val, i)
+            age = time - array.get(R_tim, i)
+            rall += rv
+            nw += rv > 0 ? 1 : 0
+            if age <= 1000 * 60 * 60 * 24 * 30
+                r30 += rv
+                n30 += 1
+            if age <= 1000 * 60 * 60 * 24 * 90
+                r90 += rv
+                n90 += 1
+    rtxt = "30д: " + (r30 >= 0 ? "+" : "") + str.tostring(r30, "#.#") + "R (" + str.tostring(n30) + ") | 90д: " + (r90 >= 0 ? "+" : "") + str.tostring(r90, "#.#") + "R | всё: " + (rall >= 0 ? "+" : "") + str.tostring(rall, "#.#") + "R (" + str.tostring(array.size(R_val)) + ", WR " + str.tostring(array.size(R_val) > 0 ? nw * 100.0 / array.size(R_val) : 0, "#") + "%)"
+    table.cell(T, 0, 7, "R системы", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="R = +" + str.tostring(k_, "#.#") + " при тейке, -1 при стопе. Эталон на истории: WR 33%, ~+0.5R/нед в среднем, ~51% недель плюсовые, до 8 минусовых недель подряд — серии НОРМА, не поломка.")
+    table.cell(T, 1, 7, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    // 8: серия SL
+    int streak = 0
+    if array.size(R_val) > 0
+        for i = array.size(R_val) - 1 to 0
+            if array.get(R_val, i) < 0
+                streak += 1
+            else
+                break
+    table.cell(T, 0, 8, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="При WR 33% серия из 5+ стопов — обычное дело. Предохранитель ограничивает недельный ущерб.")
+    table.cell(T, 1, 8, str.tostring(streak) + " SL подряд", text_color=streak >= 5 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
