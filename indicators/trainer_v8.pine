@@ -590,16 +590,25 @@ f_join(_arr) =>
             s := s + (j > 0 ? ">" : "") + array.get(_arr, j)
     s
 
+// направление по последней метке (правило движка):
+// HL → лонг (откат) | LL → лонг (разворот) | LH → шорт (откат) | HH → шорт (разворот)
+f_dir(_lab) =>
+    _lab == "HL" ? " → ЛОНГ (откат)" : _lab == "LL" ? " → ЛОНГ (разворот)" : _lab == "LH" ? " → ШОРТ (откат)" : _lab == "HH" ? " → ШОРТ (разворот)" : ""
+
 if show_tbl and barstate.islast
     hdrc = color.new(color.silver, 0)
     // 0: быстрые метки (порог свечи — в tooltip)
     table.cell(T, 0, 0, "Метки 2/2 (5)", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Порог размера свечи: " + (na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%"))
     t5 = f_tail(5)
-    table.cell(T, 1, 0, t5 == "" ? "—" : t5, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
-    // 1: медленные метки
+    n_f = array.size(q_lab)
+    dir_f = n_f > 0 ? f_dir(array.get(q_lab, n_f - 1)) : ""
+    table.cell(T, 1, 0, t5 == "" ? "—" : t5 + dir_f, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
+    // 1: медленные метки (контекст — движок по ним НЕ решает)
     t5s = f_join(q5_lab)
-    table.cell(T, 0, 1, "Медленные 5/5", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 1, t5s == "" ? "—" : t5s, text_color=color.new(#00c853, 0), text_halign=text.align_left, text_size=size.small)
+    n_s = array.size(q5_lab)
+    dir_s = n_s > 0 ? f_dir(array.get(q5_lab, n_s - 1)) : ""
+    table.cell(T, 0, 1, "Медленные 5/5", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Направление — контекст: движок решает только по быстрым 2/2")
+    table.cell(T, 1, 1, t5s == "" ? "—" : t5s + dir_s, text_color=color.new(#00c853, 0), text_halign=text.align_left, text_size=size.small)
     // 2: запрет сейчас — предупреждение ДО триггера
     bantxt = str.endswith(t5, "LL>HH") ? "…LL>HH → шорт от HH запрещён" : str.endswith(t5, "HH>LH") ? "…HH>LH → шорт от LH запрещён" : str.endswith(t5, "LL>LH>HL") ? "…LL>LH>HL → лонг от HL запрещён" : str.endswith(t5, "HH>LL>LL") ? "…HH>LL>LL → лонг от LL запрещён" : "нет"
     table.cell(T, 0, 2, "Запрет сейчас", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
