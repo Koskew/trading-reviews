@@ -656,7 +656,7 @@ if show_tbl and barstate.islast
     // 8: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
     int streak = 0
     if array.size(R_val) > 0
-        for i = array.size(R_val) - 1 to 0 by -1
+        for i = array.size(R_val) - 1 to 0
             if array.get(R_val, i) == -1.0
                 streak += 1
             else
