@@ -159,6 +159,22 @@ plotshape(show_slow and not na(lh5) ? lh5 : na, title="LH 5/5", style=shape.labe
 plotshape(show_slow and not na(hl5) ? hl5 : na, title="HL 5/5", style=shape.labelup,   location=location.belowbar, color=color.new(color.black, 100), text="HL", textcolor=col_slowL, size=size.small, offset=-5)
 plotshape(show_slow and not na(ll5) ? ll5 : na, title="LL 5/5", style=shape.labelup,   location=location.belowbar, color=color.new(color.black, 100), text="LL", textcolor=col_slowL, size=size.small, offset=-5)
 
+// очередь медленных меток (5 последних) — для таблицы
+var string[] q5_lab = array.new_string()
+f_push5(_lab) =>
+    array.push(q5_lab, _lab)
+    if array.size(q5_lab) > 5
+        array.shift(q5_lab)
+new5H = not na(hh5) or not na(lh5)
+new5L = not na(hl5) or not na(ll5)
+if new5H and new5L
+    f_push5(not na(hh5) ? "HH" : "LH")
+    f_push5(not na(hl5) ? "HL" : "LL")
+else if new5H
+    f_push5(not na(hh5) ? "HH" : "LH")
+else if new5L
+    f_push5(not na(hl5) ? "HL" : "LL")
+
 // ══════════════ ПОРОГ РАЗМЕРА ══════════════
 var float[] trig_sz = array.new_float()
 sz_pct = close > 0 ? (high - low) / close * 100 : 0.0
@@ -564,24 +580,60 @@ if barstate.islast
 
 // ══════════════ ТАБЛИЦА-ЧЕКЛИСТ ══════════════
 tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
-var table T = table.new(tp_, 2, 6, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+var table T = table.new(tp_, 2, 9, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+
+f_join(_arr) =>
+    s = ""
+    n = array.size(_arr)
+    if n > 0
+        for j = 0 to n - 1
+            s := s + (j > 0 ? ">" : "") + array.get(_arr, j)
+    s
 
 if show_tbl and barstate.islast
     hdrc = color.new(color.silver, 0)
-    table.cell(T, 0, 0, "Метки (5)", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    // 0: быстрые метки (порог свечи — в tooltip)
+    table.cell(T, 0, 0, "Метки 2/2 (5)", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Порог размера свечи: " + (na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%"))
     t5 = f_tail(5)
     table.cell(T, 1, 0, t5 == "" ? "—" : t5, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 0, 1, "Порог свечи", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 1, na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%", text_color=color.white, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 0, 2, "Открытых позиций", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    // 1: медленные метки
+    t5s = f_join(q5_lab)
+    table.cell(T, 0, 1, "Медленные 5/5", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 1, t5s == "" ? "—" : t5s, text_color=color.new(#00c853, 0), text_halign=text.align_left, text_size=size.small)
+    // 2: запрет сейчас — предупреждение ДО триггера
+    bantxt = str.endswith(t5, "LL>HH") ? "…LL>HH → шорт от HH запрещён" : str.endswith(t5, "HH>LH") ? "…HH>LH → шорт от LH запрещён" : str.endswith(t5, "LL>LH>HL") ? "…LL>LH>HL → лонг от HL запрещён" : str.endswith(t5, "HH>LL>LL") ? "…HH>LL>LL → лонг от LL запрещён" : "нет"
+    table.cell(T, 0, 2, "Запрет сейчас", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 2, bantxt, text_color=bantxt == "нет" ? color.gray : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    // 3: структура — чистая / мутная (мутная = зона хотелок)
+    n_q = array.size(q_lab)
+    up_t = 0
+    dn_t = 0
+    slom_t = false
+    if n_q > 0
+        for j = 0 to n_q - 1
+            lb = array.get(q_lab, j)
+            up_t += lb == "HH" or lb == "HL" ? 1 : 0
+            dn_t += lb == "LH" or lb == "LL" ? 1 : 0
+            if j > 0
+                a = array.get(q_lab, j - 1)
+                if (a == "HH" and lb == "LL") or (a == "LL" and lb == "HL")
+                    slom_t := true
+    strtxt = slom_t ? "МУТНАЯ (слом в пятёрке) — зона хотелок" : up_t >= 4 ? "чистая: тренд вверх " + str.tostring(up_t) + "/5" : dn_t >= 4 ? "чистая: тренд вниз " + str.tostring(dn_t) + "/5" : "смешанная (вверх " + str.tostring(up_t) + " / вниз " + str.tostring(dn_t) + ")"
+    strcol = slom_t ? color.new(color.red, 0) : (up_t >= 4 or dn_t >= 4) ? color.lime : color.new(color.orange, 0)
+    table.cell(T, 0, 3, "Структура", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 3, strtxt, text_color=strcol, text_halign=text.align_left, text_size=size.small)
+    // 4: позиции
+    table.cell(T, 0, 4, "Открытых позиций", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
     np_ = array.size(P_en)
     postxt = np_ == 0 ? "нет" : str.tostring(np_) + " шт | посл: " + (array.get(P_long, np_ - 1) ? "LONG " : "SHORT ") + str.tostring(array.get(P_en, np_ - 1), format.mintick) + " | SL " + str.tostring(array.get(P_sl, np_ - 1), format.mintick) + " | TP " + str.tostring(array.get(P_tp, np_ - 1), format.mintick)
-    table.cell(T, 1, 2, postxt, text_color=np_ > 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 0, 3, "Посл. триггер", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 3, na(last_time) ? "—" : str.format_time(last_time, "dd.MM HH:mm", tbl_tz), text_color=color.white, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 0, 4, "Чек-лист", text_color=hdrc, text_halign=text.align_left, text_valign=text.align_top, text_size=size.small)
-    table.cell(T, 1, 4, last_chk, text_color=color.new(color.aqua, 0), text_halign=text.align_left, text_size=size.small)
-    // счётчик R движка: R = RR при TP, -1 при SL; «всё» = загруженная история графика
+    table.cell(T, 1, 4, postxt, text_color=np_ > 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
+    // 5: время последнего триггера
+    table.cell(T, 0, 5, "Посл. триггер", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 5, na(last_time) ? "—" : str.format_time(last_time, "dd.MM HH:mm", tbl_tz), text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    // 6: чек-лист
+    table.cell(T, 0, 6, "Чек-лист", text_color=hdrc, text_halign=text.align_left, text_valign=text.align_top, text_size=size.small)
+    table.cell(T, 1, 6, last_chk, text_color=color.new(color.aqua, 0), text_halign=text.align_left, text_size=size.small)
+    // 7: счётчик R движка: R = RR при TP, -1 при SL; «всё» = загруженная история графика
     float r30 = 0.0
     float r90 = 0.0
     float rall = 0.0
@@ -599,8 +651,19 @@ if show_tbl and barstate.islast
                 r90 += rv
                 n90 += 1
     rtxt = "30д: " + (r30 >= 0 ? "+" : "") + str.tostring(r30, "#.#") + "R (" + str.tostring(n30) + ") | 90д: " + (r90 >= 0 ? "+" : "") + str.tostring(r90, "#.#") + "R (" + str.tostring(n90) + ") | всё: " + (rall >= 0 ? "+" : "") + str.tostring(rall, "#.#") + "R (" + str.tostring(array.size(R_val)) + ")"
-    table.cell(T, 0, 5, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 5, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 7, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 7, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    // 8: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
+    int streak = 0
+    if array.size(R_val) > 0
+        for i = array.size(R_val) - 1 to 0 by -1
+            if array.get(R_val, i) == -1.0
+                streak += 1
+            else
+                break
+    sertxt = str.tostring(streak) + " SL подряд (золото 9л: медиана 4, p90 12, макс 38)"
+    table.cell(T, 0, 8, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 8, sertxt, text_color=streak >= 8 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
 
 // ══════════════ ЗИГ-ЗАГ (логика v3, окно N баров) ══════════════
 to_up_zz = high >= ta.highest(zz_len)
