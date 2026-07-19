@@ -23,6 +23,8 @@ v5_pctl     = input.float(80, "Перцентиль для «авто»", minval
 v5_min_smpl = input.int(20, "Мин. триггеров для «авто»", minval=1, group=g2)
 v5_rr_min   = input.float(3.0, "Мин. RR магнита (движок: 3.0)", minval=0.5, step=0.5, group=g2)
 v5_buf_pct  = input.float(0.1, "Буфер стопа, % (движок: 0.1)", minval=0.0, step=0.05, group=g2)
+use_ws      = input.bool(true, "Недельный предохранитель", group=g2, tooltip="Неделя достигла -X R → новые входы стоят до понедельника. Проверено на v5: +53.2R → +80.1R, худшая неделя -9 → -3R, обе половины истории лучше, 8/10 лет не хуже, эффект размазан по 36 месяцам. ВЫКЛ = эталонные 939 сделок движка.")
+ws_r        = input.float(3.0, "Предохранитель, -R (проверено: 3)", minval=1.0, step=0.5, group=g2)
 
 g3 = "🎨 Точки"
 show_entry = input.bool(true,  "Входы (жёлтые)", group=g3)
@@ -304,6 +306,15 @@ var array<line>  P_lntp = array.new<line>()
 var float[] R_val = array.new_float()
 var int[]   R_tim = array.new_int()
 
+// неделя и предохранитель (weekofyear может расходиться с ISO на стыке годов)
+var int   wk_cur = -1
+var float wk_r   = 0.0
+if barstate.isconfirmed
+    wk_now = year(time, "Etc/UTC") * 100 + weekofyear(time, "Etc/UTC")
+    if wk_now != wk_cur
+        wk_cur := wk_now
+        wk_r := 0.0
+
 in_line = last_bar_index - bar_index <= v5_line_bars
 in_tip  = last_bar_index - bar_index <= v5_tip_bars
 
@@ -325,8 +336,10 @@ if array.size(P_en) > 0
             if hit_sl or hit_tp
                 res_sl = hit_sl  // SL и TP в одном баре = SL (консервативно, как движок)
                 pen = array.get(P_en, k)
-                array.push(R_val, res_sl ? -1.0 : math.abs(ptp - pen) / math.abs(pen - psl))
+                R_ = res_sl ? -1.0 : math.abs(ptp - pen) / math.abs(pen - psl)
+                array.push(R_val, R_)
                 array.push(R_tim, time)
+                wk_r += R_
                 if show_lines and in_line
                     label.new(bar_index, res_sl ? psl : ptp, res_sl ? "SL" : "TP", style=res_sl ? label.style_label_up : label.style_label_down, color=res_sl ? color.new(color.red, 0) : color.new(color.green, 0), textcolor=color.white, size=size.small)
                 array.remove(P_long, k)
@@ -351,14 +364,19 @@ float  v5_rr_ = na
 string v5_chk = na
 
 if shape_ok and barstate.isconfirmed
-    [a1, a2, a3, a4, a5, a6, a7] = f_decide(thr)
-    v5_vd  := a1
-    v5_dd  := a2
-    v5_en  := a3
-    v5_sl_ := a4
-    v5_tp_ := a5
-    v5_rr_ := a6
-    v5_chk := a7
+    if use_ws and wk_r <= -ws_r
+        v5_vd  := "стоп-неделя"
+        v5_dd  := ""
+        v5_chk := "СТОП-НЕДЕЛЯ: " + str.tostring(wk_r, "#.#") + "R ≤ -" + str.tostring(ws_r, "#.#") + "R\nновые входы — с понедельника\nИТОГ: стоп-неделя"
+    else
+        [a1, a2, a3, a4, a5, a6, a7] = f_decide(thr)
+        v5_vd  := a1
+        v5_dd  := a2
+        v5_en  := a3
+        v5_sl_ := a4
+        v5_tp_ := a5
+        v5_rr_ := a6
+        v5_chk := a7
 
 // память для таблицы
 var string last_chk  = "—"
@@ -393,11 +411,12 @@ c_slom  = v5_vd == "слом"
 c_frz   = v5_vd == "заморозка"
 c_big   = v5_vd == "бол.свеча"
 c_norr  = v5_vd == "нет RR"
-c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz or c_big or c_norr)
+c_wsb   = v5_vd == "стоп-неделя"
+c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz or c_big or c_norr or c_wsb)
 
 // в окне tooltip точки рисуются метками (наводимы мышью), вне окна — plotshape
 f_dotcol() =>
-    c_entry ? col_entry : c_ban ? col_ban : c_trend ? col_trend : c_slom ? col_slom : c_frz ? col_frz : c_big ? col_big : c_norr ? col_norr : color.new(color.gray, 85)
+    c_entry ? col_entry : c_ban ? col_ban : c_trend ? col_trend : c_slom ? col_slom : c_frz ? col_frz : c_big ? col_big : c_norr ? col_norr : c_wsb ? color.new(color.maroon, 20) : color.new(color.gray, 85)
 
 if show_tips and in_tip and not na(v5_vd) and ((c_entry and show_entry) or (not c_entry and show_skip))
     label.new(bar_index, na, "", yloc=yloc.belowbar, style=label.style_circle, color=f_dotcol(), size=c_ban or c_entry ? size.small : size.tiny, tooltip=v5_chk)
@@ -416,6 +435,7 @@ plotshape(no_tip and show_skip and c_big and not show_lett, title="Бол.све
 plotshape(no_tip and show_skip and c_big and show_lett,     title="Бол.свеча (буква)", style=shape.circle, location=location.belowbar, color=col_big, size=size.tiny, text="б", textcolor=col_big)
 plotshape(no_tip and show_skip and c_norr and not show_lett, title="Нет RR", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny)
 plotshape(no_tip and show_skip and c_norr and show_lett,     title="Нет RR (буква)", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny, text="R", textcolor=col_norr)
+plotshape(no_tip and show_skip and c_wsb, title="Стоп-неделя", style=shape.circle, location=location.belowbar, color=color.new(color.maroon, 20), size=size.tiny)
 plotshape(no_tip and show_skip and c_other, title="Прочее", style=shape.circle, location=location.belowbar, color=color.new(color.gray, 85), size=size.tiny)
 
 // ══════════════ УРОВНИ HH/LL: ЖИВЫЕ, N БЛИЖАЙШИХ ══════════════
@@ -580,7 +600,7 @@ if barstate.islast
 
 // ══════════════ ТАБЛИЦА-ЧЕКЛИСТ ══════════════
 tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
-var table T = table.new(tp_, 2, 9, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+var table T = table.new(tp_, 2, 10, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
 
 f_join(_arr) =>
     s = ""
@@ -662,7 +682,12 @@ if show_tbl and barstate.islast
     rtxt = "30д: " + (r30 >= 0 ? "+" : "") + str.tostring(r30, "#.#") + "R (" + str.tostring(n30) + ") | 90д: " + (r90 >= 0 ? "+" : "") + str.tostring(r90, "#.#") + "R (" + str.tostring(n90) + ") | всё: " + (rall >= 0 ? "+" : "") + str.tostring(rall, "#.#") + "R (" + str.tostring(array.size(R_val)) + ")"
     table.cell(T, 0, 7, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
     table.cell(T, 1, 7, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
-    // 8: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
+    // 8: неделя и предохранитель
+    ws_hit = use_ws and wk_r <= -ws_r
+    wktxt = (wk_r >= 0 ? "+" : "") + str.tostring(wk_r, "#.#") + "R" + (use_ws ? (ws_hit ? "  |  ПРЕДОХРАНИТЕЛЬ СРАБОТАЛ — до пн" : "  |  стоп-неделя при -" + str.tostring(ws_r, "#.#") + "R") : "  |  предохранитель выкл")
+    table.cell(T, 0, 8, "Неделя", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="R движка с начала недели (пн, UTC). Предохранитель проверен: +53.2R → +80.1R, худшая неделя -9 → -3R, train и test оба лучше, 8/10 лет не хуже, эффект размазан (36 мес плюс / 9 минус).")
+    table.cell(T, 1, 8, wktxt, text_color=ws_hit ? color.new(color.red, 0) : wk_r >= 0 ? color.lime : color.new(color.orange, 0), text_halign=text.align_left, text_size=size.small)
+    // 9: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
     int streak = 0
     if array.size(R_val) > 0
         for i = array.size(R_val) - 1 to 0
@@ -671,8 +696,8 @@ if show_tbl and barstate.islast
             else
                 break
     sertxt = str.tostring(streak) + " SL подряд (золото 9л: медиана 4, p90 12, макс 38)"
-    table.cell(T, 0, 8, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 8, sertxt, text_color=streak >= 8 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 9, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 9, sertxt, text_color=streak >= 8 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
 
 // ══════════════ ЗИГ-ЗАГ (логика v3, окно N баров) ══════════════
 to_up_zz = high >= ta.highest(zz_len)
