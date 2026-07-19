@@ -135,6 +135,18 @@ else if newH
 else if newL
     f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
 
+// последняя метка каждой стороны — для режима тренда
+var string lastH_lab = ""
+var float  lastH_prc = na
+var string lastL_lab = ""
+var float  lastL_prc = na
+if newH
+    lastH_lab := not na(higherhigh) ? "HH" : "LH"
+    lastH_prc := ph_value
+if newL
+    lastL_lab := not na(higherlow) ? "HL" : "LL"
+    lastL_prc := pl_value
+
 // ══════════════ МЕТКИ СТРУКТУРЫ НА ГРАФИКЕ ══════════════
 // быстрые 2/2 — решающие (по ним движок); мелкие, приглушённые
 plotshape(show_fast and not na(higherhigh) ? higherhigh : na, title="HH 2/2", style=shape.triangledown, location=location.abovebar, color=col_fastH, text="HH", textcolor=col_fastH, size=size.tiny, offset=-2)
@@ -600,7 +612,7 @@ if barstate.islast
 
 // ══════════════ ТАБЛИЦА-ЧЕКЛИСТ ══════════════
 tp_ = tbl_pos == "верх-право" ? position.top_right : tbl_pos == "верх-лево" ? position.top_left : tbl_pos == "низ-право" ? position.bottom_right : position.bottom_left
-var table T = table.new(tp_, 2, 10, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
+var table T = table.new(tp_, 2, 13, bgcolor=color.new(#000000, 15), border_width=1, border_color=color.new(color.gray, 70))
 
 f_join(_arr) =>
     s = ""
@@ -615,25 +627,36 @@ f_join(_arr) =>
 f_dir(_lab) =>
     _lab == "HL" ? " → кандидат: лонг отката" : _lab == "LL" ? " → кандидат: лонг дна" : _lab == "LH" ? " → кандидат: шорт отката" : _lab == "HH" ? " → кандидат: шорт вершины" : ""
 
+f_block(_row, _txt) =>
+    table.cell(T, 0, _row, _txt, text_color=color.new(color.silver, 20), bgcolor=color.new(#1a1a2e, 0), text_halign=text.align_center, text_size=size.tiny)
+    table.cell(T, 1, _row, "", bgcolor=color.new(#1a1a2e, 0), text_size=size.tiny)
+    table.merge_cells(T, 0, _row, 1, _row)
+
 if show_tbl and barstate.islast
     hdrc = color.new(color.silver, 0)
-    // 0: быстрые метки (порог свечи — в tooltip)
-    table.cell(T, 0, 0, "Метки 2/2 (5)", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Порог размера свечи: " + (na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%"))
-    t5 = f_tail(5)
-    n_f = array.size(q_lab)
-    dir_f = n_f > 0 ? f_dir(array.get(q_lab, n_f - 1)) : ""
-    table.cell(T, 1, 0, t5 == "" ? "—" : t5 + dir_f, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
-    // 1: медленные метки (контекст — движок по ним НЕ решает)
+    // ═══ БЛОК: ГДЕ МЫ (контекст) ═══
+    f_block(0, "━━  ГДЕ МЫ  ━━")
+    // 1: тренд по последним меткам сторон
+    // ВОСХ = HH+HL, НИСХ = LH+LL, иначе боковик/переход (42% времени на золоте)
+    is_up = lastH_lab == "HH" and lastL_lab == "HL"
+    is_dn = lastH_lab == "LH" and lastL_lab == "LL"
+    trtxt = is_up ? "ВОСХОДЯЩИЙ — жив, пока HL " + str.tostring(lastL_prc, format.mintick) + " не пробит телом" : is_dn ? "НИСХОДЯЩИЙ — жив, пока LH " + str.tostring(lastH_prc, format.mintick) + " не пробит телом" : "БОКОВИК / переход"
+    trcol = is_up ? color.lime : is_dn ? color.new(color.red, 0) : color.new(color.orange, 0)
+    table.cell(T, 0, 1, "Тренд", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Проверено на 9 годах золота: в тренде новый экстремум приходит раньше пробоя уровня в 51-54% эпизодов (слабая тенденция, не закон). Чисто фитильный пробой тренд переживает в 38-47% случаев. ВАЖНО: v5 стабилен именно в БОКОВИКЕ (+23.3 train / +12.9 test) — в устойчивых трендах эпохозависим.")
+    table.cell(T, 1, 1, trtxt, text_color=trcol, text_halign=text.align_left, text_size=size.small)
+    // 2: медленные метки (контекст — движок по ним НЕ решает)
     t5s = f_join(q5_lab)
     n_s = array.size(q5_lab)
     dir_s = n_s > 0 ? f_dir(array.get(q5_lab, n_s - 1)) : ""
-    table.cell(T, 0, 1, "Медленные 5/5", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Направление — контекст: движок решает только по быстрым 2/2")
-    table.cell(T, 1, 1, t5s == "" ? "—" : t5s + dir_s, text_color=color.new(#00c853, 0), text_halign=text.align_left, text_size=size.small)
-    // 2: запрет сейчас — предупреждение ДО триггера
-    bantxt = str.endswith(t5, "LL>HH") ? "…LL>HH → шорт от HH запрещён" : str.endswith(t5, "HH>LH") ? "…HH>LH → шорт от LH запрещён" : str.endswith(t5, "LL>LH>HL") ? "…LL>LH>HL → лонг от HL запрещён" : str.endswith(t5, "HH>LL>LL") ? "…HH>LL>LL → лонг от LL запрещён" : "нет"
-    table.cell(T, 0, 2, "Запрет сейчас", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 2, bantxt, text_color=bantxt == "нет" ? color.gray : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
-    // 3: структура — чистая / мутная (мутная = зона хотелок)
+    table.cell(T, 0, 2, "Медленные 5/5", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Направление — контекст: движок решает только по быстрым 2/2")
+    table.cell(T, 1, 2, t5s == "" ? "—" : t5s + dir_s, text_color=color.new(#00c853, 0), text_halign=text.align_left, text_size=size.small)
+    // 3: быстрые метки (порог свечи — в tooltip)
+    t5 = f_tail(5)
+    n_f = array.size(q_lab)
+    dir_f = n_f > 0 ? f_dir(array.get(q_lab, n_f - 1)) : ""
+    table.cell(T, 0, 3, "Метки 2/2 (5)", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Решающие метки движка. Порог размера свечи: " + (na(thr) ? "мало данных" : str.tostring(thr, "#.###") + "%"))
+    table.cell(T, 1, 3, t5 == "" ? "—" : t5 + dir_f, text_color=color.yellow, text_halign=text.align_left, text_size=size.small)
+    // 4: структура — чистая / мутная (мутная = зона хотелок)
     n_q = array.size(q_lab)
     up_t = 0
     dn_t = 0
@@ -649,20 +672,31 @@ if show_tbl and barstate.islast
                     slom_t := true
     strtxt = slom_t ? "МУТНАЯ (слом в пятёрке) — зона хотелок" : up_t >= 4 ? "чистая: тренд вверх " + str.tostring(up_t) + "/5" : dn_t >= 4 ? "чистая: тренд вниз " + str.tostring(dn_t) + "/5" : "смешанная (вверх " + str.tostring(up_t) + " / вниз " + str.tostring(dn_t) + ")"
     strcol = slom_t ? color.new(color.red, 0) : (up_t >= 4 or dn_t >= 4) ? color.lime : color.new(color.orange, 0)
-    table.cell(T, 0, 3, "Структура", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 3, strtxt, text_color=strcol, text_halign=text.align_left, text_size=size.small)
-    // 4: позиции
-    table.cell(T, 0, 4, "Открытых позиций", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 4, "Структура", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 4, strtxt, text_color=strcol, text_halign=text.align_left, text_size=size.small)
+    // 5: запрет сейчас — предупреждение ДО триггера
+    bantxt = str.endswith(t5, "LL>HH") ? "…LL>HH → шорт от HH запрещён" : str.endswith(t5, "HH>LH") ? "…HH>LH → шорт от LH запрещён" : str.endswith(t5, "LL>LH>HL") ? "…LL>LH>HL → лонг от HL запрещён" : str.endswith(t5, "HH>LL>LL") ? "…HH>LL>LL → лонг от LL запрещён" : "нет"
+    table.cell(T, 0, 5, "Запрет сейчас", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 5, bantxt, text_color=bantxt == "нет" ? color.gray : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    // ═══ БЛОК: ДВИЖОК ═══
+    f_block(6, "━━  ДВИЖОК  ━━")
+    // 7: чек-лист (время триггера — в заголовке)
+    chk_hdr = "Чек-лист" + (na(last_time) ? "" : " " + str.format_time(last_time, "dd.MM HH:mm", tbl_tz))
+    table.cell(T, 0, 7, chk_hdr, text_color=hdrc, text_halign=text.align_left, text_valign=text.align_top, text_size=size.small)
+    table.cell(T, 1, 7, last_chk, text_color=color.new(color.aqua, 0), text_halign=text.align_left, text_size=size.small)
+    // 8: позиции
+    table.cell(T, 0, 8, "Позиции", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
     np_ = array.size(P_en)
     postxt = np_ == 0 ? "нет" : str.tostring(np_) + " шт | посл: " + (array.get(P_long, np_ - 1) ? "LONG " : "SHORT ") + str.tostring(array.get(P_en, np_ - 1), format.mintick) + " | SL " + str.tostring(array.get(P_sl, np_ - 1), format.mintick) + " | TP " + str.tostring(array.get(P_tp, np_ - 1), format.mintick)
-    table.cell(T, 1, 4, postxt, text_color=np_ > 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
-    // 5: время последнего триггера
-    table.cell(T, 0, 5, "Посл. триггер", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 5, na(last_time) ? "—" : str.format_time(last_time, "dd.MM HH:mm", tbl_tz), text_color=color.white, text_halign=text.align_left, text_size=size.small)
-    // 6: чек-лист
-    table.cell(T, 0, 6, "Чек-лист", text_color=hdrc, text_halign=text.align_left, text_valign=text.align_top, text_size=size.small)
-    table.cell(T, 1, 6, last_chk, text_color=color.new(color.aqua, 0), text_halign=text.align_left, text_size=size.small)
-    // 7: счётчик R движка: R = RR при TP, -1 при SL; «всё» = загруженная история графика
+    table.cell(T, 1, 8, postxt, text_color=np_ > 0 ? color.white : color.gray, text_halign=text.align_left, text_size=size.small)
+    // ═══ БЛОК: РИСК ═══
+    f_block(9, "━━  РИСК  ━━")
+    // 10: неделя и предохранитель
+    ws_hit = use_ws and wk_r <= -ws_r
+    wktxt = (wk_r >= 0 ? "+" : "") + str.tostring(wk_r, "#.#") + "R" + (use_ws ? (ws_hit ? "  |  ПРЕДОХРАНИТЕЛЬ СРАБОТАЛ — до пн" : "  |  стоп-неделя при -" + str.tostring(ws_r, "#.#") + "R") : "  |  предохранитель выкл")
+    table.cell(T, 0, 10, "Неделя", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="R движка с начала недели (пн, UTC). Предохранитель проверен: +53.2R → +80.1R, худшая неделя -9 → -3R, train и test оба лучше, 8/10 лет не хуже, эффект размазан (36 мес плюс / 9 минус).")
+    table.cell(T, 1, 10, wktxt, text_color=ws_hit ? color.new(color.red, 0) : wk_r >= 0 ? color.lime : color.new(color.orange, 0), text_halign=text.align_left, text_size=size.small)
+    // 11: счётчик R движка: R = RR при TP, -1 при SL; «всё» = загруженная история графика
     float r30 = 0.0
     float r90 = 0.0
     float rall = 0.0
@@ -680,14 +714,9 @@ if show_tbl and barstate.islast
                 r90 += rv
                 n90 += 1
     rtxt = "30д: " + (r30 >= 0 ? "+" : "") + str.tostring(r30, "#.#") + "R (" + str.tostring(n30) + ") | 90д: " + (r90 >= 0 ? "+" : "") + str.tostring(r90, "#.#") + "R (" + str.tostring(n90) + ") | всё: " + (rall >= 0 ? "+" : "") + str.tostring(rall, "#.#") + "R (" + str.tostring(array.size(R_val)) + ")"
-    table.cell(T, 0, 7, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 7, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
-    // 8: неделя и предохранитель
-    ws_hit = use_ws and wk_r <= -ws_r
-    wktxt = (wk_r >= 0 ? "+" : "") + str.tostring(wk_r, "#.#") + "R" + (use_ws ? (ws_hit ? "  |  ПРЕДОХРАНИТЕЛЬ СРАБОТАЛ — до пн" : "  |  стоп-неделя при -" + str.tostring(ws_r, "#.#") + "R") : "  |  предохранитель выкл")
-    table.cell(T, 0, 8, "Неделя", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="R движка с начала недели (пн, UTC). Предохранитель проверен: +53.2R → +80.1R, худшая неделя -9 → -3R, train и test оба лучше, 8/10 лет не хуже, эффект размазан (36 мес плюс / 9 минус).")
-    table.cell(T, 1, 8, wktxt, text_color=ws_hit ? color.new(color.red, 0) : wk_r >= 0 ? color.lime : color.new(color.orange, 0), text_halign=text.align_left, text_size=size.small)
-    // 9: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
+    table.cell(T, 0, 11, "R движка", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 11, rtxt, text_color=r30 >= 0 ? color.lime : color.new(color.red, 0), text_halign=text.align_left, text_size=size.small)
+    // 12: серия SL — статистика против тильта (эталон: медиана 4, p90 12, макс 38 за 9 лет)
     int streak = 0
     if array.size(R_val) > 0
         for i = array.size(R_val) - 1 to 0
@@ -696,8 +725,8 @@ if show_tbl and barstate.islast
             else
                 break
     sertxt = str.tostring(streak) + " SL подряд (золото 9л: медиана 4, p90 12, макс 38)"
-    table.cell(T, 0, 9, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
-    table.cell(T, 1, 9, sertxt, text_color=streak >= 8 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 0, 12, "Серия", text_color=hdrc, text_halign=text.align_left, text_size=size.small)
+    table.cell(T, 1, 12, sertxt, text_color=streak >= 8 ? color.new(color.orange, 0) : color.gray, text_halign=text.align_left, text_size=size.small)
 
 // ══════════════ ЗИГ-ЗАГ (логика v3, окно N баров) ══════════════
 to_up_zz = high >= ta.highest(zz_len)
