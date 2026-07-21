@@ -25,6 +25,7 @@ v5_rr_min   = input.float(3.0, "Мин. RR магнита (движок: 3.0)", 
 v5_buf_pct  = input.float(0.1, "Буфер стопа, % (движок: 0.1)", minval=0.0, step=0.05, group=g2)
 use_ws      = input.bool(true, "Недельный предохранитель", group=g2, tooltip="Неделя достигла -X R → новые входы стоят до понедельника. Проверено на v5: +53.2R → +80.1R, худшая неделя -9 → -3R, обе половины истории лучше, 8/10 лет не хуже, эффект размазан по 36 месяцам. ВЫКЛ = эталонные 939 сделок движка.")
 ws_r        = input.float(3.0, "Предохранитель, -R (проверено: 3)", minval=1.0, step=0.5, group=g2)
+use_regfilt = input.bool(false, "Фильтр режима: не входить БОК+LONG", group=g2, tooltip="Пропускать ЛОНГИ, когда тренд D3 = БОКОВИК. На золоте лонги в боковике дали -33R (шорты +15R — асимметрия). С фильтром: +53.2R → +86.2R (train +37/test +49). Прошёл walk-forward (+26R OOS, единственный выживший из кандидатов). Оговорка: не бесплатен — в 2021 бакет дал +7R, минусовым был 6/8 лет. ВЫКЛ = эталонные 939 сделок движка.")
 
 g3 = "🎨 Точки"
 show_entry = input.bool(true,  "Входы (жёлтые)", group=g3)
@@ -37,6 +38,7 @@ col_slom   = input.color(color.new(color.purple, 0),  "слом",            gro
 col_frz    = input.color(color.new(color.silver, 40), "заморозка",       group=g3)
 col_big    = input.color(color.new(#404040, 20),      "бол.свеча",       group=g3)
 col_norr   = input.color(color.new(color.gray, 75),   "нет RR",          group=g3)
+col_regf   = input.color(color.new(color.teal, 0),    "фильтр БОК+LONG", group=g3)
 
 g6 = "🏷 Структура"
 show_fast  = input.bool(true, "Быстрые метки 2/2 (решающие)", group=g6, tooltip="~31/нед. По ним работает движок. Подтверждение через 2 бара.")
@@ -427,6 +429,10 @@ if shape_ok and barstate.isconfirmed
         v5_tp_ := a5
         v5_rr_ := a6
         v5_chk := a7
+        // фильтр режима: лонг в боковике D3 → пропуск (прошёл walk-forward, +26R OOS)
+        if use_regfilt and v5_vd == "ВХОД" and v5_dd == "LONG" and d3_state == 0
+            v5_vd  := "режим БОК+LONG"
+            v5_chk := a7 + "\n─────\nФИЛЬТР РЕЖИМА: лонг в БОКОВИКЕ (D3)\nлонги в боковике на золоте: -33R за 9 лет\nпропуск (walk-forward +26R OOS)\nИТОГ: пропуск по режиму"
 
 // память для таблицы
 var string last_chk  = "—"
@@ -462,11 +468,12 @@ c_frz   = v5_vd == "заморозка"
 c_big   = v5_vd == "бол.свеча"
 c_norr  = v5_vd == "нет RR"
 c_wsb   = v5_vd == "стоп-неделя"
-c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz or c_big or c_norr or c_wsb)
+c_regf  = v5_vd == "режим БОК+LONG"
+c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz or c_big or c_norr or c_wsb or c_regf)
 
 // в окне tooltip точки рисуются метками (наводимы мышью), вне окна — plotshape
 f_dotcol() =>
-    c_entry ? col_entry : c_ban ? col_ban : c_trend ? col_trend : c_slom ? col_slom : c_frz ? col_frz : c_big ? col_big : c_norr ? col_norr : c_wsb ? color.new(color.maroon, 20) : color.new(color.gray, 85)
+    c_entry ? col_entry : c_ban ? col_ban : c_trend ? col_trend : c_slom ? col_slom : c_frz ? col_frz : c_big ? col_big : c_norr ? col_norr : c_wsb ? color.new(color.maroon, 20) : c_regf ? col_regf : color.new(color.gray, 85)
 
 if show_tips and in_tip and not na(v5_vd) and ((c_entry and show_entry) or (not c_entry and show_skip))
     label.new(bar_index, na, "", yloc=yloc.belowbar, style=label.style_circle, color=f_dotcol(), size=c_ban or c_entry ? size.small : size.tiny, tooltip=v5_chk)
@@ -486,6 +493,7 @@ plotshape(no_tip and show_skip and c_big and show_lett,     title="Бол.све
 plotshape(no_tip and show_skip and c_norr and not show_lett, title="Нет RR", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny)
 plotshape(no_tip and show_skip and c_norr and show_lett,     title="Нет RR (буква)", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny, text="R", textcolor=col_norr)
 plotshape(no_tip and show_skip and c_wsb, title="Стоп-неделя", style=shape.circle, location=location.belowbar, color=color.new(color.maroon, 20), size=size.tiny)
+plotshape(no_tip and show_skip and c_regf, title="Фильтр БОК+LONG", style=shape.circle, location=location.belowbar, color=col_regf, size=size.small)
 plotshape(no_tip and show_skip and c_other, title="Прочее", style=shape.circle, location=location.belowbar, color=color.new(color.gray, 85), size=size.tiny)
 
 // ══════════════ УРОВНИ HH/LL: ЖИВЫЕ, N БЛИЖАЙШИХ ══════════════
