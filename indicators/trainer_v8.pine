@@ -135,17 +135,6 @@ else if newH
 else if newL
     f_push(not na(higherlow)  ? "HL" : "LL", pl_value, "low")
 
-// последняя метка каждой стороны — для режима тренда
-var string lastH_lab = ""
-var float  lastH_prc = na
-var string lastL_lab = ""
-var float  lastL_prc = na
-if newH
-    lastH_lab := not na(higherhigh) ? "HH" : "LH"
-    lastH_prc := ph_value
-if newL
-    lastL_lab := not na(higherlow) ? "HL" : "LL"
-    lastL_prc := pl_value
 
 // ══════════════ МЕТКИ СТРУКТУРЫ НА ГРАФИКЕ ══════════════
 // быстрые 2/2 — решающие (по ним движок); мелкие, приглушённые
@@ -188,6 +177,55 @@ else if new5H
     f_push5(not na(hh5) ? "HH" : "LH")
 else if new5L
     f_push5(not na(hl5) ? "HL" : "LL")
+
+// ══════════════ ТРЕНД D3: ЛИПКОЕ 5/5, СМЕРТЬ ТЕЛОМ ══════════════
+// Проверено на 9 годах золота: медиана тренда 26 баров против 6 у 2/2.
+// Старт по паре медленных меток (HH+HL / LH+LL); уровень = последний
+// HL(восх) или LH(нисх), обновляется новыми метками той же стороны.
+// Смерть ТОЛЬКО когда тело свечи (min/max open,close) закрылось за уровнем.
+// Контр-метки тренд НЕ убивают — только пробой уровня телом. Буфер НЕ
+// добавлен намеренно: подгонка под фид одного брокера (см. research_log).
+var int   d3_state = 0        // +1 восх, -1 нисх, 0 боковик
+var float d3_lvl   = na       // живой уровень тренда
+var float d3_lvl_prev = na    // уровень, который убил прошлый тренд (для подсказки)
+var int   d3_since = na       // бар старта текущего сегмента
+var string d3_lastH = ""
+var string d3_lastL = ""
+var float  d3_lastHp = na
+var float  d3_lastLp = na
+if barstate.isconfirmed
+    if new5H
+        d3_lastH := not na(hh5) ? "HH" : "LH"
+        d3_lastHp := not na(hh5) ? hh5 : lh5
+        if d3_state == -1 and d3_lastH == "LH"
+            d3_lvl := d3_lastHp        // уровень нисх-тренда = последний LH
+    if new5L
+        d3_lastL := not na(hl5) ? "HL" : "LL"
+        d3_lastLp := not na(hl5) ? hl5 : ll5
+        if d3_state == 1 and d3_lastL == "HL"
+            d3_lvl := d3_lastLp        // уровень восх-тренда = последний HL
+    if d3_state == 0
+        if d3_lastH == "HH" and d3_lastL == "HL"
+            d3_state := 1
+            d3_lvl := d3_lastLp
+            d3_since := bar_index
+        else if d3_lastH == "LH" and d3_lastL == "LL"
+            d3_state := -1
+            d3_lvl := d3_lastHp
+            d3_since := bar_index
+    // смерть телом
+    body_lo = math.min(open, close)
+    body_hi = math.max(open, close)
+    if d3_state == 1 and not na(d3_lvl) and body_lo < d3_lvl
+        d3_lvl_prev := d3_lvl
+        d3_state := 0
+        d3_lvl := na
+        d3_since := bar_index
+    else if d3_state == -1 and not na(d3_lvl) and body_hi > d3_lvl
+        d3_lvl_prev := d3_lvl
+        d3_state := 0
+        d3_lvl := na
+        d3_since := bar_index
 
 // ══════════════ ПОРОГ РАЗМЕРА ══════════════
 var float[] trig_sz = array.new_float()
@@ -636,13 +674,11 @@ if show_tbl and barstate.islast
     hdrc = color.new(color.silver, 0)
     // ═══ БЛОК: ГДЕ МЫ (контекст) ═══
     f_block(0, "━━  ГДЕ МЫ  ━━")
-    // 1: тренд по последним меткам сторон
-    // ВОСХ = HH+HL, НИСХ = LH+LL, иначе боковик/переход (42% времени на золоте)
-    is_up = lastH_lab == "HH" and lastL_lab == "HL"
-    is_dn = lastH_lab == "LH" and lastL_lab == "LL"
-    trtxt = is_up ? "ВОСХОДЯЩИЙ — жив, пока HL " + str.tostring(lastL_prc, format.mintick) + " не пробит телом" : is_dn ? "НИСХОДЯЩИЙ — жив, пока LH " + str.tostring(lastH_prc, format.mintick) + " не пробит телом" : "БОКОВИК / переход"
-    trcol = is_up ? color.lime : is_dn ? color.new(color.red, 0) : color.new(color.orange, 0)
-    table.cell(T, 0, 1, "Тренд", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="Проверено на 9 годах золота: в тренде новый экстремум приходит раньше пробоя уровня в 51-54% эпизодов (слабая тенденция, не закон). Чисто фитильный пробой тренд переживает в 38-47% случаев. ВАЖНО: v5 стабилен именно в БОКОВИКЕ (+23.3 train / +12.9 test) — в устойчивых трендах эпохозависим.")
+    // 1: тренд D3 (липкое 5/5, смерть телом) — устойчивый режим, не мигание
+    dur = na(d3_since) ? 0 : bar_index - d3_since
+    trtxt = d3_state == 1 ? "ВОСХОДЯЩИЙ (" + str.tostring(dur) + " бар) — жив, пока HL " + str.tostring(d3_lvl, format.mintick) + " не пробит телом" : d3_state == -1 ? "НИСХОДЯЩИЙ (" + str.tostring(dur) + " бар) — жив, пока LH " + str.tostring(d3_lvl, format.mintick) + " не пробит телом" : "БОКОВИК / переход" + (na(d3_lvl_prev) ? "" : " (посл. тренд убит на " + str.tostring(d3_lvl_prev, format.mintick) + ")")
+    trcol = d3_state == 1 ? color.lime : d3_state == -1 ? color.new(color.red, 0) : color.new(color.orange, 0)
+    table.cell(T, 0, 1, "Тренд", text_color=hdrc, text_halign=text.align_left, text_size=size.small, tooltip="D3: медленная структура 5/5, тренд умирает только при закрытии ТЕЛА свечи за уровнем (последний HL для восх / LH для нисх). Проверено на 9 годах золота: медиана тренда 26 баров против 6 у быстрых 2/2 — устойчивый режим, а не мигание. Буфер НЕ добавлен намеренно: подгонка под фид брокера. ВАЖНО: v5 стабилен в БОКОВИКЕ (+23.3 train / +12.9 test), в устойчивых трендах эпохозависим.")
     table.cell(T, 1, 1, trtxt, text_color=trcol, text_halign=text.align_left, text_size=size.small)
     // 2: медленные метки (контекст — движок по ним НЕ решает)
     t5s = f_join(q5_lab)
