@@ -39,6 +39,8 @@ bo_ws  = input.bool(true, "Недельный предохранитель -3R",
 
 g3 = "🎨 Отображение"
 show_dots = input.bool(true, "Жёлтые точки (контекст)", group=g3)
+show_tips = input.bool(true, "Наводимые точки (ховер = что решили системы)", group=g3)
+tip_bars  = input.int(1500, "Наведение за последние N баров", minval=100, group=g3, tooltip="Лимит TradingView 500 меток. В этом окне жёлтые точки наводятся мышью.")
 show_ln   = input.bool(true, "Линии сделок", group=g3)
 draw_bars = input.int(4000, "Рисовать за последние N баров", minval=100, group=g3)
 tbl_pos   = input.string("верх-право", "Таблица", options=["верх-право","верх-лево","низ-право","низ-лево"], group=g3)
@@ -324,6 +326,7 @@ var float bo_lo = na
 var int   bo_until = na
 bo_sess = hutc >= bo_sa and hutc <= bo_sb
 string b_evt = na
+string bo_tip = na
 if show_bo and barstate.isconfirmed
     blocked = bo_ws and Bwr <= -3.0
     if bo_pend and array.size(BE) == 0 and not blocked
@@ -348,6 +351,8 @@ if show_bo and barstate.isconfirmed
                 b_evt := u ? "LONG" : "SHORT"
                 if show_ln and in_win
                     line.new(bar_index, en, bar_index + 1, en, color=color.new(color.teal, 0), width=1)
+    if shape_ok
+        bo_tip := array.size(BE) > 0 ? "в позиции (ждёт SL/TP)" : blocked ? "предохранитель -3R (стоп до пн)" : not bo_sess ? "вне сессии " + str.tostring(bo_sa) + "-" + str.tostring(bo_sb) + " UTC" : "армирован — стоп-ордера за H/L, окно " + str.tostring(bo_W) + " бар"
     if shape_ok and array.size(BE) == 0 and not blocked and bo_sess
         bo_hi := high
         bo_lo := low
@@ -373,7 +378,16 @@ else if not na(boH)
     boH := na
     boL := na
 
-plotshape(show_dots and shape_ok, title="Жёлтая точка", style=shape.circle, location=location.belowbar, color=color.new(color.yellow, 20), size=size.tiny)
+// ════════ НАВОДИМЫЕ ТОЧКИ (ховер = что решили обе системы) ════════
+in_tip = last_bar_index - bar_index <= tip_bars
+v5_tip = na(a_vd) ? "—" : a_vd == "ВХОД" ? "ВХОД " + a_dd : a_vd
+bo_tip2 = na(bo_tip) ? "—" : bo_tip
+is_entry = a_entry or not na(b_evt)
+tip_txt = "🕯 Жёлтая свеча\n─────\nA v5 (разворот): " + v5_tip + "\nB пробой (импульс): " + bo_tip2 + (is_entry ? "\n─────\n✅ ВХОД: " + (a_entry ? "v5 " + a_dd : "") + (not na(b_evt) ? " пробой " + b_evt : "") : "")
+if show_tips and in_tip and shape_ok and barstate.isconfirmed
+    label.new(bar_index, na, "", yloc=yloc.belowbar, style=label.style_circle, color=is_entry ? color.new(color.lime, 0) : color.new(color.yellow, 20), size=size.tiny, tooltip=tip_txt)
+
+plotshape(show_dots and shape_ok and (not show_tips or not in_tip), title="Жёлтая точка", style=shape.circle, location=location.belowbar, color=color.new(color.yellow, 20), size=size.tiny)
 
 alertcondition(a_entry, "v5 вход", "Портфель: вход по системе v5")
 alertcondition(not na(b_evt), "Пробой вход", "Портфель: вход по системе Пробой")
