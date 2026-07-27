@@ -10,7 +10,7 @@
 // Наведи мышь на точку в свежем окне — всплывёт чек-лист цепочки решения.
 // Данные: сделки живут медиана 4 бара (80% < 17), одновременно до 5 позиций.
 // ═══════════════════════════════════════════════════════════════════
-indicator("Тренажёр v8 (движок v5) — п.1-10", overlay=true, max_lines_count=500, max_labels_count=500)
+indicator("Тренажёр v8 (движок v5) — п.1-10", overlay=true, max_lines_count=500, max_labels_count=500, max_bars_back=3000)
 
 // ══════════════ НАСТРОЙКИ ══════════════
 g1 = "🕯 Триггерные свечи"
@@ -631,7 +631,9 @@ f_draw_nearest(_p, _b, _col, _w, _style) =>
                         best := i
             if best >= 0
                 array.set(used, best, true)
-                x1 = math.max(array.get(_b, best), bar_index - 9000)
+                // левый край не дальше буфера (2900 < max_bars_back 3000) — иначе в симуляторе
+                // линия просит бар за пределами истории. Линия всё равно extend.right.
+                x1 = math.max(array.get(_b, best), bar_index - 2900)
                 array.push(lv_lines, line.new(x1, array.get(_p, best), bar_index, array.get(_p, best), color=color.new(_col, lv_transp), width=_w, style=_style, extend=extend.right))
 
 if barstate.islast
