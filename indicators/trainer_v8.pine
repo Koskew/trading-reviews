@@ -28,8 +28,9 @@ ws_r        = input.float(3.0, "Предохранитель, -R (провере
 use_regfilt = input.bool(false, "Фильтр режима: не входить БОК+LONG", group=g2, tooltip="Пропускать ЛОНГИ, когда тренд D3 = БОКОВИК. На золоте лонги в боковике дали -33R (шорты +15R — асимметрия). С фильтром: +53.2R → +86.2R (train +37/test +49). Прошёл walk-forward (+26R OOS, единственный выживший из кандидатов). Оговорка: не бесплатен — в 2021 бакет дал +7R, минусовым был 6/8 лет. ВЫКЛ = эталонные 939 сделок движка.")
 
 g3 = "🎨 Точки"
-show_entry = input.bool(true,  "Входы (жёлтые)", group=g3)
-show_skip  = input.bool(true,  "Пропуски (цвет = причина)", group=g3)
+show_entry = input.bool(true,  "Входы (жёлтый круг)", group=g3)
+show_skip  = input.bool(true,  "Пропуски (треугольники, цвет = причина)", group=g3)
+show_mech  = input.bool(false, "+ механические пропуски (заморозка/бол.свеча/нет RR)", group=g3, tooltip="Это 71% всех точек и они без учебной ценности. По умолчанию скрыты — на графике остаются только вход и учебные пропуски (запрет, против тренда, слом).")
 show_lett  = input.bool(false, "Буквы причин у точек", group=g3, tooltip="з=заморозка б=бол.свеча т=против тренда с=слом R=нет RR х=запрет хвоста")
 col_entry  = input.color(color.new(color.yellow, 0),  "ВХОД",            group=g3)
 col_ban    = input.color(color.new(color.red, 0),     "запрет структуры", group=g3)
@@ -475,26 +476,33 @@ c_other = not na(v5_vd) and not (c_entry or c_ban or c_trend or c_slom or c_frz 
 f_dotcol() =>
     c_entry ? col_entry : c_ban ? col_ban : c_trend ? col_trend : c_slom ? col_slom : c_frz ? col_frz : c_big ? col_big : c_norr ? col_norr : c_wsb ? color.new(color.maroon, 20) : c_regf ? col_regf : color.new(color.gray, 85)
 
-if show_tips and in_tip and not na(v5_vd) and ((c_entry and show_entry) or (not c_entry and show_skip))
-    label.new(bar_index, na, "", yloc=yloc.belowbar, style=label.style_circle, color=f_dotcol(), size=c_ban or c_entry ? size.small : size.tiny, tooltip=v5_chk)
+// механические пропуски (заморозка/бол.свеча/нет RR) — 71% точек, скрыты по умолчанию
+c_mech = c_frz or c_big or c_norr
+skip_vis = show_skip and (not c_mech or show_mech)
+
+if show_tips and in_tip and not na(v5_vd) and ((c_entry and show_entry) or (not c_entry and skip_vis))
+    // жёлтая (ВХОД) — круг; все пропуски — треугольник вниз
+    label.new(bar_index, na, "", yloc=yloc.belowbar, style=c_entry ? label.style_circle : label.style_triangledown, color=f_dotcol(), size=c_entry ? size.small : c_ban ? size.small : size.tiny, tooltip=v5_chk)
 
 no_tip = not show_tips or not in_tip
+// ВХОД — единственный круг, жёлтый
 plotshape(no_tip and show_entry and c_entry, title="ВХОД", style=shape.circle, location=location.belowbar, color=col_entry, size=size.small)
-plotshape(no_tip and show_skip and c_ban and not show_lett, title="Запрет структуры", style=shape.circle, location=location.belowbar, color=col_ban, size=size.small)
-plotshape(no_tip and show_skip and c_ban and show_lett,     title="Запрет (буква)",   style=shape.circle, location=location.belowbar, color=col_ban, size=size.small, text="х", textcolor=col_ban)
-plotshape(no_tip and show_skip and c_trend and not show_lett, title="Против тренда", style=shape.circle, location=location.belowbar, color=col_trend, size=size.tiny)
-plotshape(no_tip and show_skip and c_trend and show_lett,     title="Против тренда (буква)", style=shape.circle, location=location.belowbar, color=col_trend, size=size.tiny, text="т", textcolor=col_trend)
-plotshape(no_tip and show_skip and c_slom and not show_lett, title="Слом", style=shape.circle, location=location.belowbar, color=col_slom, size=size.tiny)
-plotshape(no_tip and show_skip and c_slom and show_lett,     title="Слом (буква)", style=shape.circle, location=location.belowbar, color=col_slom, size=size.tiny, text="с", textcolor=col_slom)
-plotshape(no_tip and show_skip and c_frz and not show_lett, title="Заморозка", style=shape.circle, location=location.belowbar, color=col_frz, size=size.tiny)
-plotshape(no_tip and show_skip and c_frz and show_lett,     title="Заморозка (буква)", style=shape.circle, location=location.belowbar, color=col_frz, size=size.tiny, text="з", textcolor=col_frz)
-plotshape(no_tip and show_skip and c_big and not show_lett, title="Бол.свеча", style=shape.circle, location=location.belowbar, color=col_big, size=size.tiny)
-plotshape(no_tip and show_skip and c_big and show_lett,     title="Бол.свеча (буква)", style=shape.circle, location=location.belowbar, color=col_big, size=size.tiny, text="б", textcolor=col_big)
-plotshape(no_tip and show_skip and c_norr and not show_lett, title="Нет RR", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny)
-plotshape(no_tip and show_skip and c_norr and show_lett,     title="Нет RR (буква)", style=shape.circle, location=location.belowbar, color=col_norr, size=size.tiny, text="R", textcolor=col_norr)
-plotshape(no_tip and show_skip and c_wsb, title="Стоп-неделя", style=shape.circle, location=location.belowbar, color=color.new(color.maroon, 20), size=size.tiny)
-plotshape(no_tip and show_skip and c_regf, title="Фильтр БОК+LONG", style=shape.circle, location=location.belowbar, color=col_regf, size=size.small)
-plotshape(no_tip and show_skip and c_other, title="Прочее", style=shape.circle, location=location.belowbar, color=color.new(color.gray, 85), size=size.tiny)
+// пропуски — треугольники вниз
+plotshape(no_tip and show_skip and c_ban and not show_lett, title="Запрет структуры", style=shape.triangledown, location=location.belowbar, color=col_ban, size=size.small)
+plotshape(no_tip and show_skip and c_ban and show_lett,     title="Запрет (буква)",   style=shape.triangledown, location=location.belowbar, color=col_ban, size=size.small, text="х", textcolor=col_ban)
+plotshape(no_tip and show_skip and c_trend and not show_lett, title="Против тренда", style=shape.triangledown, location=location.belowbar, color=col_trend, size=size.tiny)
+plotshape(no_tip and show_skip and c_trend and show_lett,     title="Против тренда (буква)", style=shape.triangledown, location=location.belowbar, color=col_trend, size=size.tiny, text="т", textcolor=col_trend)
+plotshape(no_tip and show_skip and c_slom and not show_lett, title="Слом", style=shape.triangledown, location=location.belowbar, color=col_slom, size=size.tiny)
+plotshape(no_tip and show_skip and c_slom and show_lett,     title="Слом (буква)", style=shape.triangledown, location=location.belowbar, color=col_slom, size=size.tiny, text="с", textcolor=col_slom)
+plotshape(no_tip and skip_vis and c_frz and not show_lett, title="Заморозка", style=shape.triangledown, location=location.belowbar, color=col_frz, size=size.tiny)
+plotshape(no_tip and skip_vis and c_frz and show_lett,     title="Заморозка (буква)", style=shape.triangledown, location=location.belowbar, color=col_frz, size=size.tiny, text="з", textcolor=col_frz)
+plotshape(no_tip and skip_vis and c_big and not show_lett, title="Бол.свеча", style=shape.triangledown, location=location.belowbar, color=col_big, size=size.tiny)
+plotshape(no_tip and skip_vis and c_big and show_lett,     title="Бол.свеча (буква)", style=shape.triangledown, location=location.belowbar, color=col_big, size=size.tiny, text="б", textcolor=col_big)
+plotshape(no_tip and skip_vis and c_norr and not show_lett, title="Нет RR", style=shape.triangledown, location=location.belowbar, color=col_norr, size=size.tiny)
+plotshape(no_tip and skip_vis and c_norr and show_lett,     title="Нет RR (буква)", style=shape.triangledown, location=location.belowbar, color=col_norr, size=size.tiny, text="R", textcolor=col_norr)
+plotshape(no_tip and show_skip and c_wsb, title="Стоп-неделя", style=shape.triangledown, location=location.belowbar, color=color.new(color.maroon, 20), size=size.tiny)
+plotshape(no_tip and show_skip and c_regf, title="Фильтр БОК+LONG", style=shape.triangledown, location=location.belowbar, color=col_regf, size=size.small)
+plotshape(no_tip and skip_vis and c_other, title="Прочее", style=shape.triangledown, location=location.belowbar, color=color.new(color.gray, 85), size=size.tiny)
 
 // ══════════════ УРОВНИ HH/LL: ЖИВЫЕ, N БЛИЖАЙШИХ ══════════════
 // Хранилища живых уровней (цена + бар пивота). Пробитый уровень умирает.
